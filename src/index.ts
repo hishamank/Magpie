@@ -138,7 +138,7 @@ program
 
 program
   .command('health')
-  .description('Check Ollama connection, DB status, etc.')
+  .description('Check llama.cpp server connection, DB status, etc.')
   .action(async () => {
     console.log('\n=== Health Check ===\n');
 
@@ -152,19 +152,17 @@ program
       console.log(`[FAIL] Database: ${(err as Error).message}`);
     }
 
-    // Check Ollama
+    // Check llama.cpp server
     try {
-      const resp = await fetch(`${config.ollama.url}/api/tags`);
+      const resp = await fetch(`${config.llm.url}/health`);
       if (resp.ok) {
-        const data = await resp.json() as { models?: { name: string }[] };
-        const models = data.models?.map((m: { name: string }) => m.name) ?? [];
-        const hasModel = models.some((m: string) => m.startsWith(config.ollama.model));
-        console.log(`[${hasModel ? 'OK' : 'WARN'}] Ollama: ${config.ollama.url} (${models.length} models${hasModel ? `, ${config.ollama.model} available` : `, ${config.ollama.model} NOT found`})`);
+        const data = await resp.json() as { status?: string };
+        console.log(`[OK] llama.cpp: ${config.llm.url} (status: ${data.status || 'ok'})`);
       } else {
-        console.log(`[FAIL] Ollama: HTTP ${resp.status}`);
+        console.log(`[FAIL] llama.cpp: HTTP ${resp.status}`);
       }
     } catch (err) {
-      console.log(`[FAIL] Ollama: ${(err as Error).message}`);
+      console.log(`[FAIL] llama.cpp: ${(err as Error).message}`);
     }
 
     // Check vault path

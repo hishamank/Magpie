@@ -16,9 +16,8 @@ export const config = {
   vault: {
     path: resolveFromRoot(process.env.VAULT_PATH || './vault'),
   },
-  ollama: {
-    url: process.env.OLLAMA_URL || 'http://localhost:11434',
-    model: process.env.OLLAMA_MODEL || 'gemma4:e4b',
+  llm: {
+    url: process.env.LLM_SERVER_URL || 'http://localhost:8080',
   },
   twitter: {
     cookiesPath: resolveFromRoot(process.env.TWITTER_COOKIES_PATH || './cookies/twitter-cookies.json'),

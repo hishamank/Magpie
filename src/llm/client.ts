@@ -7,32 +7,36 @@ export async function chatCompletion(
   prompt: string,
   options?: { temperature?: number; format?: 'json' }
 ): Promise<string> {
-  const url = `${config.ollama.url}/api/chat`;
+  const url = `${config.llm.url}/v1/chat/completions`;
 
-  logger.debug({ model: config.ollama.model }, 'Sending LLM request');
+  logger.debug('Sending LLM request');
+
+  const body: Record<string, unknown> = {
+    messages: [{ role: 'user', content: prompt }],
+    temperature: options?.temperature ?? 0.3,
+    stream: false,
+  };
+
+  if (options?.format === 'json') {
+    body.response_format = { type: 'json_object' };
+  }
 
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: config.ollama.model,
-      messages: [{ role: 'user', content: prompt }],
-      stream: false,
-      format: options?.format,
-      options: {
-        temperature: options?.temperature ?? 0.3,
-        num_ctx: 8192,
-      },
-    }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Ollama API error (${response.status}): ${text}`);
+    throw new Error(`llama.cpp API error (${response.status}): ${text}`);
   }
 
-  const data = await response.json() as { message: { content: string } };
+  const data = await response.json() as {
+    choices: { message: { content: string } }[];
+  };
+
   logger.debug('LLM response received');
-  return data.message.content;
+  return data.choices[0].message.content;
 }
