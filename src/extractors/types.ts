@@ -9,6 +9,5 @@ export interface ExtractedContent {
   metadata?: Record<string, unknown>;
 }
 
-export interface Extractor {
-  extract(url: string, sourceMetadata?: Record<string, unknown>): Promise<ExtractedContent>;
-}
+/** Handler function signature — each service exports one of these */
+export type Handler = (url: string, sourceMetadata?: Record<string, unknown>) => Promise<ExtractedContent>;

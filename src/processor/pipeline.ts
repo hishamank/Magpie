@@ -1,4 +1,4 @@
-import { extractContent } from '../extractors/router.js';
+import { extractContent } from '../extractors/registry.js';
 import { classifyContent } from './classifier.js';
 import { archiveContent } from './archiver.js';
 import { processKeywords, updateKeywordLinks, computeRelatedBookmarks } from './keywords.js';

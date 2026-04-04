@@ -4,7 +4,7 @@ import { getPendingBookmarks } from '../db/queries.js';
 import { processBookmark } from '../processor/pipeline.js';
 import { updateAllIndexFiles } from '../obsidian/indexer.js';
 import { startDiscordBot } from '../collectors/discord.js';
-import { closeBrowser } from '../extractors/fallback.js';
+import { closeBrowser } from '../extractors/registry.js';
 import { closeDb } from '../db/connection.js';
 import { config } from '../config.js';
 import { getLogger } from '../utils/logger.js';

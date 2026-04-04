@@ -86,6 +86,12 @@ export function initSchema(): void {
       items_collected INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS domain_hits (
+      domain TEXT PRIMARY KEY,
+      hit_count INTEGER NOT NULL DEFAULT 1,
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_bookmarks_url_hash ON bookmarks(url_hash);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_source ON bookmarks(source);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_category ON bookmarks(category);
