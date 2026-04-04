@@ -1,0 +1,26 @@
+[Unit]
+Description=llama.cpp Inference Server (Gemma 4 E4B)
+After=network.target
+
+[Service]
+User=hicham
+EnvironmentFile=/etc/llama-server.env
+WorkingDirectory=/opt/llama.cpp
+
+ExecStart=/opt/llama.cpp/build/bin/llama-server \
+  -m ${MODEL_PATH} \
+  -c ${CONTEXT_SIZE} \
+  -t ${THREADS} \
+  -ngl ${GPU_LAYERS} \
+  --batch-size ${BATCH_SIZE} \
+  --ubatch-size ${UBATCH_SIZE} \
+  --threads-http ${HTTP_THREADS} \
+  --mlock \
+  --host ${HOST} \
+  --port ${PORT}
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

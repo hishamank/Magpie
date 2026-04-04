@@ -5,13 +5,17 @@
 ## Stats
 
 - **Total bookmarks:** 2
-- **Completed:** 0
+- **Completed:** 1
 - **Pending:** 0
-- **Failed:** 2
+- **Failed:** 1
 
 ## By Source
 
 - **manual:** 2
+
+## By Category
+
+- [[_index_by_category#article|article]]: 1
 
 ## Quick Links
 
