@@ -1,4 +1,5 @@
 import type { BookmarkRow } from '../db/queries.js';
+import type { EnrichmentResult } from '../processor/enricher.js';
 
 export function slugify(text: string): string {
   return text
@@ -47,10 +48,11 @@ export interface NoteContext {
     shared_keywords: string;
     relation_score: number;
   }[];
+  enrichment?: EnrichmentResult;
 }
 
 export function buildNoteContent(ctx: NoteContext): string {
-  const { bookmark, keywords, related } = ctx;
+  const { bookmark, keywords, related, enrichment } = ctx;
   const subcategories = bookmark.subcategories ? JSON.parse(bookmark.subcategories) as string[] : [];
   const tags = keywords.map(k => k.keyword);
 
@@ -103,8 +105,25 @@ export function buildNoteContent(ctx: NoteContext): string {
     lines.push('');
   }
 
-  // Related bookmarks
-  if (related.length > 0) {
+  // Related bookmarks — use enriched descriptions when available
+  if (enrichment && enrichment.relations.length > 0) {
+    lines.push('## Related Bookmarks');
+    lines.push('');
+    for (const rel of enrichment.relations) {
+      lines.push(`- [[${rel.noteName}|${rel.title}]] — ${rel.relationship}`);
+    }
+    // Also include any keyword-linked relations not covered by enrichment
+    const enrichedIds = new Set(enrichment.relations.map(r => r.bookmarkId));
+    for (const rel of related) {
+      if (enrichedIds.has(rel.id)) continue;
+      const noteName = rel.obsidian_path
+        ? rel.obsidian_path.replace(/\.md$/, '').split('/').pop()
+        : slugify(rel.title || 'unknown');
+      const sharedKws = JSON.parse(rel.shared_keywords) as string[];
+      lines.push(`- [[${noteName}]] — shares keywords: ${sharedKws.join(', ')}`);
+    }
+    lines.push('');
+  } else if (related.length > 0) {
     lines.push('## Related Bookmarks');
     lines.push('');
     for (const rel of related) {

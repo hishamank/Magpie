@@ -8,7 +8,7 @@ import {
   getAllKeywordsWithCounts,
 } from '../db/queries.js';
 import { getDb } from '../db/connection.js';
-import { buildNoteName } from './templates.js';
+import { buildNoteName, getCategoryFolder } from './templates.js';
 import type { BookmarkRow } from '../db/queries.js';
 import { getLogger } from '../utils/logger.js';
 
@@ -20,6 +20,7 @@ export function updateAllIndexFiles(): void {
   generateTagIndex();
   generateRecentIndex();
   generateToReadIndex();
+  generateMachineIndex();
   logger.info('All index files updated');
 }
 
@@ -191,4 +192,58 @@ function generateToReadIndex(): void {
   lines.push('');
 
   writeIndex('_to_read.md', lines.join('\n'));
+}
+
+/**
+ * Machine-readable index: one JSON entry per completed bookmark.
+ * Designed for LLM context — compact enough to scan thousands of entries,
+ * detailed enough to decide which notes to read in full.
+ */
+function generateMachineIndex(): void {
+  const db = getDb();
+  const bookmarks = db.prepare(`
+    SELECT b.id, b.url, b.title, b.source, b.category, b.summary,
+           b.actionability, b.quality_signal, b.author, b.collected_at,
+           b.obsidian_path
+    FROM bookmarks b
+    WHERE b.status = 'completed'
+    ORDER BY b.collected_at DESC
+  `).all() as BookmarkRow[];
+
+  const entries = bookmarks.map(b => {
+    // Get keywords for this bookmark
+    const keywords = db.prepare(`
+      SELECT k.keyword FROM keywords k
+      JOIN bookmark_keywords bk ON k.id = bk.keyword_id
+      WHERE bk.bookmark_id = ?
+    `).all(b.id) as { keyword: string }[];
+
+    const noteName = buildNoteName(b);
+    const folder = getCategoryFolder(b.category);
+
+    return {
+      id: b.id,
+      slug: noteName,
+      path: `${folder}/${noteName}`,
+      title: b.title || 'Untitled',
+      url: b.url,
+      source: b.source,
+      category: b.category || 'other',
+      tags: keywords.map(k => k.keyword),
+      summary: b.summary || '',
+      quality: b.quality_signal || 'standard',
+      actionability: b.actionability || 'reference',
+      author: b.author || undefined,
+      date: (b.collected_at || '').slice(0, 10),
+    };
+  });
+
+  const index = {
+    generated: new Date().toISOString(),
+    count: entries.length,
+    entries,
+  };
+
+  const filePath = path.join(config.vault.path, '_index.json');
+  fs.writeFileSync(filePath, JSON.stringify(index, null, 2), 'utf-8');
 }

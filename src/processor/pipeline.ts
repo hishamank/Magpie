@@ -1,10 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { extractContent } from '../extractors/registry.js';
 import { classifyContent } from './classifier.js';
 import { archiveContent } from './archiver.js';
 import { processKeywords, updateKeywordLinks, computeRelatedBookmarks } from './keywords.js';
+import { enrichRelationships } from './enricher.js';
 import { compileObsidianNote } from '../obsidian/compiler.js';
 import { updateAllIndexFiles } from '../obsidian/indexer.js';
 import { computeSimhash } from '../utils/hash.js';
+import { config } from '../config.js';
 import {
   getBookmarkByUrlHash,
   insertBookmark,
@@ -20,6 +24,29 @@ import type { BookmarkInput } from '../collectors/types.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('processor');
+
+/**
+ * Append an entry to the vault operations log.
+ * Format: ## [YYYY-MM-DD] ingest | Title — category, source
+ * Parseable with: grep "^## \[" _log.md | tail -5
+ */
+function appendToLog(title: string, category: string, source: string, url: string): void {
+  try {
+    const logPath = path.join(config.vault.path, '_log.md');
+    const date = new Date().toISOString().slice(0, 10);
+    const cleanTitle = (title || 'Untitled').replace(/\n/g, ' ').slice(0, 120);
+
+    // Create the file with header if it doesn't exist
+    if (!fs.existsSync(logPath)) {
+      fs.writeFileSync(logPath, '# Operations Log\n\nChronological record of all wiki operations.\n\n', 'utf-8');
+    }
+
+    const entry = `## [${date}] ingest | ${cleanTitle}\n- **Category:** ${category} | **Source:** ${source}\n- **URL:** ${url}\n\n`;
+    fs.appendFileSync(logPath, entry, 'utf-8');
+  } catch {
+    // Never let logging break processing
+  }
+}
 
 /**
  * Process a bookmark that already exists in the DB (called from the `process` command).
@@ -49,7 +76,19 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     await updateKeywordLinks(keywordIds);
     await computeRelatedBookmarks(bookmarkId, keywordIds);
 
-    // Step 6: Update database
+    // Step 6: Enrich relationships with LLM (Phase A)
+    const enrichment = await enrichRelationships(
+      bookmarkId,
+      classification.summary,
+      content.title || input.title || '',
+      classification.category,
+      classification.keywords,
+    );
+
+    // Use enriched summary if available, fall back to original
+    const finalSummary = enrichment?.enrichedSummary || classification.summary;
+
+    // Step 7: Update database
     updateBookmarkFull(bookmarkId, {
       title: content.title || input.title,
       contentHash,
@@ -58,19 +97,27 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
       author: content.author,
       category: classification.category,
       subcategories: JSON.stringify(classification.subcategories),
-      summary: classification.summary,
+      summary: finalSummary,
       actionability: classification.actionability,
       qualitySignal: classification.qualitySignal,
       processedAt: new Date().toISOString(),
       status: 'completed',
     });
 
-    // Step 7: Compile Obsidian note
-    const obsidianPath = await compileObsidianNote(bookmarkId);
+    // Step 8: Compile Obsidian note (pass enrichment for rich relations)
+    const obsidianPath = await compileObsidianNote(bookmarkId, enrichment);
     updateObsidianPath(bookmarkId, obsidianPath);
 
-    // Step 8: Update index files
+    // Step 9: Update index files
     updateAllIndexFiles();
+
+    // Step 10: Append to operations log
+    appendToLog(
+      content.title || input.title || '',
+      classification.category,
+      input.source,
+      input.url,
+    );
 
     // Remove from queue on success
     removeFromQueue(bookmarkId);

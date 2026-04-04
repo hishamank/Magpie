@@ -3,11 +3,12 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { getBookmarkById, getBookmarkKeywords, getRelatedBookmarks } from '../db/queries.js';
 import { buildNoteContent, buildNoteName, getCategoryFolder } from './templates.js';
+import type { EnrichmentResult } from '../processor/enricher.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('obsidian:compiler');
 
-export async function compileObsidianNote(bookmarkId: number): Promise<string> {
+export async function compileObsidianNote(bookmarkId: number, enrichment?: EnrichmentResult | null): Promise<string> {
   const bookmark = getBookmarkById(bookmarkId);
   if (!bookmark) {
     throw new Error(`Bookmark not found: ${bookmarkId}`);
@@ -16,7 +17,7 @@ export async function compileObsidianNote(bookmarkId: number): Promise<string> {
   const keywords = getBookmarkKeywords(bookmarkId);
   const related = getRelatedBookmarks(bookmarkId);
 
-  const content = buildNoteContent({ bookmark, keywords, related });
+  const content = buildNoteContent({ bookmark, keywords, related, enrichment: enrichment ?? undefined });
 
   // Determine file path
   const folder = getCategoryFolder(bookmark.category);
