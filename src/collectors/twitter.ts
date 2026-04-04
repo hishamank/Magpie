@@ -5,11 +5,40 @@ import fs from 'node:fs';
 
 const logger = getLogger('collector:twitter');
 
-interface CookieEntry {
+interface RawCookie {
   name: string;
   value: string;
   domain: string;
-  path: string;
+  path?: string;
+  expirationDate?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: string;
+}
+
+const SAME_SITE_MAP: Record<string, 'Strict' | 'Lax' | 'None'> = {
+  strict: 'Strict',
+  lax: 'Lax',
+  no_restriction: 'None',
+  none: 'None',
+};
+
+function convertCookies(raw: RawCookie[]) {
+  // Filter to only X/Twitter cookies
+  const xCookies = raw.filter(c =>
+    c.domain.includes('twitter.com') || c.domain.includes('x.com')
+  );
+
+  return xCookies.map(c => ({
+    name: c.name,
+    value: c.value,
+    domain: c.domain,
+    path: c.path || '/',
+    ...(c.expirationDate ? { expires: Math.floor(c.expirationDate) } : {}),
+    httpOnly: c.httpOnly ?? false,
+    secure: c.secure ?? true,
+    sameSite: SAME_SITE_MAP[c.sameSite || ''] || 'None' as const,
+  }));
 }
 
 export async function collectTwitterBookmarks(options?: { limit?: number }): Promise<BookmarkInput[]> {
@@ -29,19 +58,15 @@ export async function collectTwitterBookmarks(options?: { limit?: number }): Pro
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     });
 
-    // Load cookies
+    // Load and convert cookies (handles browser extension export format)
     const cookieData = JSON.parse(fs.readFileSync(config.twitter.cookiesPath, 'utf-8'));
-    const cookies: CookieEntry[] = Array.isArray(cookieData) ? cookieData : [];
+    const cookies = convertCookies(Array.isArray(cookieData) ? cookieData : []);
+    logger.info({ count: cookies.length }, 'Loaded X cookies');
 
-    await context.addCookies(cookies.map(c => ({
-      name: c.name,
-      value: c.value,
-      domain: c.domain || '.x.com',
-      path: c.path || '/',
-    })));
+    await context.addCookies(cookies);
 
     const page = await context.newPage();
-    await page.goto('https://x.com/i/bookmarks', { waitUntil: 'networkidle', timeout: 30_000 });
+    await page.goto('https://x.com/i/bookmarks', { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
     // Wait for tweets to load
     await page.waitForSelector('[data-testid="tweet"]', { timeout: 15_000 });

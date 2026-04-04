@@ -320,6 +320,39 @@ export function findSimilarContent(contentHash: string, _threshold: number): Boo
   `).get(contentHash) as BookmarkRow | undefined;
 }
 
+// Collector state queries
+export interface CollectorState {
+  source: string;
+  last_collected_at: string;
+  last_source_id: string | null;
+  items_collected: number;
+}
+
+export function getCollectorState(source: string): CollectorState | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM collector_state WHERE source = ?').get(source) as CollectorState | undefined;
+}
+
+export function updateCollectorState(source: string, lastSourceId?: string, itemsCollected?: number): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO collector_state (source, last_collected_at, last_source_id, items_collected)
+    VALUES (?, datetime('now'), ?, ?)
+    ON CONFLICT(source) DO UPDATE SET
+      last_collected_at = datetime('now'),
+      last_source_id = COALESCE(?, last_source_id),
+      items_collected = COALESCE(?, 0) + items_collected
+  `).run(source, lastSourceId ?? null, itemsCollected ?? 0, lastSourceId ?? null, itemsCollected ?? null);
+}
+
+export function getExistingSourceIds(source: string): Set<string> {
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT source_id FROM bookmarks WHERE source = ? AND source_id IS NOT NULL'
+  ).all(source) as { source_id: string }[];
+  return new Set(rows.map(r => r.source_id));
+}
+
 export function getQueueStats(): { total: number; ready: number; retrying: number } {
   const db = getDb();
   const total = (db.prepare('SELECT COUNT(*) as count FROM processing_queue').get() as { count: number }).count;

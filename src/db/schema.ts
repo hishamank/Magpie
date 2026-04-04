@@ -79,6 +79,13 @@ export function initSchema(): void {
       FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS collector_state (
+      source TEXT PRIMARY KEY,
+      last_collected_at TEXT NOT NULL,
+      last_source_id TEXT,
+      items_collected INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE INDEX IF NOT EXISTS idx_bookmarks_url_hash ON bookmarks(url_hash);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_source ON bookmarks(source);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_category ON bookmarks(category);
