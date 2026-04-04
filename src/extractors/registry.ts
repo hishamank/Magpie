@@ -5,22 +5,23 @@ import { extractTwitter } from './twitter.js';
 import { extractMedium } from './medium.js';
 import { extractGitHub } from './github.js';
 import { extractPdf } from './pdf.js';
+import { logExtraction } from './extraction-log.js';
 import { getDb } from '../db/connection.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:registry');
 
 // Domain → handler mapping
-const handlers = new Map<string, Handler>();
+const handlers = new Map<string, { handler: Handler; name: string }>();
 
-function register(domains: string[], handler: Handler): void {
-  for (const d of domains) handlers.set(d, handler);
+function register(domains: string[], handler: Handler, name: string): void {
+  for (const d of domains) handlers.set(d, { handler, name });
 }
 
 // Register all service handlers
-register(['youtube.com', 'youtu.be'], extractYouTube);
-register(['twitter.com', 'x.com'], extractTwitter);
-register(['github.com'], extractGitHub);
+register(['youtube.com', 'youtu.be'], extractYouTube, 'youtube');
+register(['twitter.com', 'x.com'], extractTwitter, 'twitter');
+register(['github.com'], extractGitHub, 'github');
 register([
   'medium.com',
   'towardsdatascience.com',
@@ -31,38 +32,40 @@ register([
   'netflixtechblog.com',
   'engineering.atspotify.com',
   'aws.plainenglish.io',
-], extractMedium);
+], extractMedium, 'medium');
 
 /**
  * Resolve a URL to its handler by matching the domain.
  * Falls back to default handler and tracks unhandled domains.
  */
-function getHandler(url: string): { handler: Handler; isDefault: boolean } {
+function getHandler(url: string): { handler: Handler; handlerName: string; isDefault: boolean } {
   const hostname = new URL(url).hostname.replace(/^www\./, '');
 
   // Direct match
-  if (handlers.has(hostname)) {
-    return { handler: handlers.get(hostname)!, isDefault: false };
+  const direct = handlers.get(hostname);
+  if (direct) {
+    return { handler: direct.handler, handlerName: direct.name, isDefault: false };
   }
 
   // Check parent domain (e.g., blog.medium.com → medium.com)
   const parts = hostname.split('.');
   for (let i = 1; i < parts.length - 1; i++) {
     const parent = parts.slice(i).join('.');
-    if (handlers.has(parent)) {
-      return { handler: handlers.get(parent)!, isDefault: false };
+    const parentMatch = handlers.get(parent);
+    if (parentMatch) {
+      return { handler: parentMatch.handler, handlerName: parentMatch.name, isDefault: false };
     }
   }
 
   // PDF check (by URL extension, not domain)
   if (/\.pdf(\?|$)/i.test(url)) {
-    return { handler: extractPdf, isDefault: false };
+    return { handler: extractPdf, handlerName: 'pdf', isDefault: false };
   }
 
   // Unhandled domain — track it so we know what to build next
   trackDomainHit(hostname);
 
-  return { handler: extractDefault, isDefault: true };
+  return { handler: extractDefault, handlerName: 'default', isDefault: true };
 }
 
 /**
@@ -89,28 +92,53 @@ function trackDomainHit(domain: string): void {
  * Routes to the appropriate service handler, falls back to default.
  */
 export async function extractContent(url: string, sourceMetadata?: Record<string, unknown>): Promise<ExtractedContent> {
-  const { handler, isDefault } = getHandler(url);
+  const { handler, handlerName, isDefault } = getHandler(url);
+  const domain = new URL(url).hostname.replace(/^www\./, '');
 
   if (isDefault) {
-    const hostname = new URL(url).hostname.replace(/^www\./, '');
-    logger.info({ url, domain: hostname }, 'No dedicated handler, using default extractor');
+    logger.info({ url, domain }, 'No dedicated handler, using default extractor');
   }
 
   try {
-    return await handler(url, sourceMetadata);
+    const result = await handler(url, sourceMetadata);
+
+    // Default handler does its own logging (with bypass/issue tracking)
+    if (!isDefault) {
+      logExtraction({
+        timestamp: new Date().toISOString(),
+        url, domain, handler: handlerName,
+        textLength: result.text.length,
+        issues: [],
+        bypassUsed: null, bypassSuccess: false,
+        finalMethod: 'direct',
+      });
+    }
+
+    return result;
   } catch (err) {
     // If a dedicated handler fails, try the default as fallback
     if (!isDefault) {
       logger.warn({ url, err }, 'Service handler failed, falling back to default extractor');
+
+      logExtraction({
+        timestamp: new Date().toISOString(),
+        url, domain, handler: handlerName,
+        textLength: 0,
+        issues: [],
+        bypassUsed: null, bypassSuccess: false,
+        finalMethod: 'handler-failed',
+        error: (err as Error).message,
+      });
+
       return extractDefault(url, sourceMetadata);
     }
     throw err;
   }
 }
 
-/** Register a new handler at runtime (used by service modules) */
-export function registerHandler(domains: string[], handler: Handler): void {
-  register(domains, handler);
+/** Register a new handler at runtime */
+export function registerHandler(domains: string[], handler: Handler, name: string): void {
+  register(domains, handler, name);
 }
 
 export { closeBrowser };

@@ -1,6 +1,7 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import type { ExtractedContent } from './types.js';
+import { tryBypass } from './bypass.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:medium');
@@ -25,7 +26,17 @@ export async function extractMedium(url: string, _sourceMetadata?: Record<string
     logger.warn({ url, err }, 'Freedium extraction failed, trying direct');
   }
 
-  // Fallback: direct fetch (may be paywalled but gets whatever's available)
+  // Try bypass strategies (google cache, archive.org, googlebot UA)
+  const bypass = await tryBypass(url);
+  if (bypass) {
+    logger.info({ url, method: bypass.method }, 'Medium bypass succeeded');
+    return {
+      ...bypass.content,
+      metadata: { extractedVia: bypass.method },
+    };
+  }
+
+  // Last resort: direct fetch (may be paywalled but gets whatever's available)
   return extractDirect(url);
 }
 

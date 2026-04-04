@@ -1,6 +1,8 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import type { ExtractedContent } from './types.js';
+import { detectIssues, tryBypass } from './bypass.js';
+import { logExtraction } from './extraction-log.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:default');
@@ -26,24 +28,98 @@ export async function closeBrowser(): Promise<void> {
 }
 
 /**
- * Default handler: Readability fetch first, Playwright fallback if that fails
- * or returns too little content.
+ * Default handler: fetch → check for issues → bypass if needed → Playwright fallback.
  */
 export async function extractDefault(url: string, _sourceMetadata?: Record<string, unknown>): Promise<ExtractedContent> {
-  // Try Readability (fast, no browser)
+  const domain = new URL(url).hostname.replace(/^www\./, '');
+
+  // Step 1: Try Readability fetch
   try {
-    const result = await extractWithReadability(url);
-    if (result.text.length > 200) return result;
-    logger.warn({ url, len: result.text.length }, 'Readability returned too little content, trying Playwright');
+    const { content, html, responseUrl } = await fetchAndParse(url);
+    const issues = detectIssues(html, responseUrl, url);
+
+    if (issues.length === 0 && content.text.length > 200) {
+      logExtraction({
+        timestamp: new Date().toISOString(),
+        url, domain, handler: 'default',
+        textLength: content.text.length,
+        issues: [],
+        bypassUsed: null, bypassSuccess: false,
+        finalMethod: 'direct',
+      });
+      return content;
+    }
+
+    // Issues detected or content too short — try bypass
+    if (issues.length > 0) {
+      logger.warn({ url, issues }, 'Content issues detected, trying bypass');
+    }
+
+    const bypass = await tryBypass(url);
+    if (bypass) {
+      logExtraction({
+        timestamp: new Date().toISOString(),
+        url, domain, handler: 'default',
+        textLength: bypass.content.text.length,
+        issues,
+        bypassUsed: bypass.method, bypassSuccess: true,
+        finalMethod: `bypass:${bypass.method}`,
+      });
+      return {
+        ...bypass.content,
+        metadata: { ...bypass.content.metadata, extractedVia: bypass.method, issuesDetected: issues },
+      };
+    }
+
+    // Bypass failed — return whatever we got from direct fetch if we have anything
+    if (content.text.length > 0) {
+      logExtraction({
+        timestamp: new Date().toISOString(),
+        url, domain, handler: 'default',
+        textLength: content.text.length,
+        issues,
+        bypassUsed: null, bypassSuccess: false,
+        finalMethod: 'direct-degraded',
+      });
+      return content;
+    }
   } catch (err) {
-    logger.warn({ url, err }, 'Readability extraction failed, trying Playwright');
+    logger.warn({ url, err }, 'Readability extraction failed');
   }
 
-  // Fallback to Playwright
-  return extractWithPlaywright(url);
+  // Step 2: Playwright fallback
+  try {
+    const result = await extractWithPlaywright(url);
+    logExtraction({
+      timestamp: new Date().toISOString(),
+      url, domain, handler: 'default',
+      textLength: result.text.length,
+      issues: [],
+      bypassUsed: null, bypassSuccess: false,
+      finalMethod: 'playwright',
+    });
+    return result;
+  } catch (err) {
+    logExtraction({
+      timestamp: new Date().toISOString(),
+      url, domain, handler: 'default',
+      textLength: 0,
+      issues: [],
+      bypassUsed: null, bypassSuccess: false,
+      finalMethod: 'failed',
+      error: (err as Error).message,
+    });
+    throw err;
+  }
 }
 
-async function extractWithReadability(url: string): Promise<ExtractedContent> {
+// --- Fetch + parse with issue detection ---
+
+async function fetchAndParse(url: string): Promise<{
+  content: ExtractedContent;
+  html: string;
+  responseUrl: string;
+}> {
   const response = await fetch(url, {
     headers: {
       'User-Agent': USER_AGENT,
@@ -58,6 +134,8 @@ async function extractWithReadability(url: string): Promise<ExtractedContent> {
   }
 
   const html = await response.text();
+  const responseUrl = response.url; // final URL after redirects
+
   const { document } = parseHTML(html);
   Object.defineProperty(document, 'baseURI', { value: url });
 
@@ -89,14 +167,20 @@ async function extractWithReadability(url: string): Promise<ExtractedContent> {
     .trim();
 
   return {
-    title: article.title || '',
-    text,
-    html: article.content || undefined,
-    author: article.byline || undefined,
-    images,
-    links,
+    content: {
+      title: article.title || '',
+      text,
+      html: article.content || undefined,
+      author: article.byline || undefined,
+      images,
+      links,
+    },
+    html,
+    responseUrl,
   };
 }
+
+// --- Playwright fallback ---
 
 async function extractWithPlaywright(url: string): Promise<ExtractedContent> {
   logger.info({ url }, 'Fallback extraction with Playwright');
