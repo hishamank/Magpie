@@ -1,0 +1,41 @@
+{
+  "name": "bookmark-kb",
+  "version": "1.0.0",
+  "description": "Personal bookmark knowledge base with LLM classification and Obsidian output",
+  "type": "module",
+  "bin": {
+    "bookmark-kb": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts serve"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.30.2",
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "better-sqlite3": "^12.8.0",
+    "commander": "^14.0.3",
+    "discord.js": "^14.26.2",
+    "dotenv": "^17.4.0",
+    "linkedom": "^0.18.12",
+    "node-cron": "^4.2.1",
+    "octokit": "^5.0.5",
+    "pino": "^10.3.1",
+    "playwright": "^1.59.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  }
+}
