@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 import { Command } from 'commander';
 import { initSchema } from './db/schema.js';
 import { closeDb } from './db/connection.js';

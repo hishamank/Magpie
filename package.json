@@ -4,11 +4,19 @@
   "description": "Personal bookmark knowledge base with LLM classification and Obsidian output",
   "type": "module",
   "bin": {
-    "bookmark-kb": "./src/index.ts"
+    "bookmark-kb": "./bin/bookmark-kb"
   },
   "scripts": {
-    "dev": "tsx src/index.ts",
-    "start": "tsx src/index.ts serve"
+    "bkb": "tsx src/index.ts",
+    "add": "tsx src/index.ts add",
+    "collect": "tsx src/index.ts collect",
+    "process": "tsx src/index.ts process",
+    "status": "tsx src/index.ts status",
+    "search": "tsx src/index.ts search",
+    "reindex": "tsx src/index.ts reindex",
+    "health": "tsx src/index.ts health",
+    "serve": "tsx src/index.ts serve",
+    "process:all": "bash process-all.sh"
   },
   "keywords": [],
   "author": "",
@@ -24,12 +32,12 @@
     "node-cron": "^4.2.1",
     "octokit": "^5.0.5",
     "pino": "^10.3.1",
-    "playwright": "^1.59.1"
+    "playwright": "^1.59.1",
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.2",
-    "tsx": "^4.21.0",
     "typescript": "^6.0.2"
   },
   "pnpm": {
