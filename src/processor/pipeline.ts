@@ -95,8 +95,10 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     const finalSummary = enrichment?.enrichedSummary || classification.summary;
 
     // Step 7: Update database
+    // Prefer LLM-generated title (descriptive) over extractor title (often generic for tweets)
+    const finalTitle = classification.title || content.title || input.title;
     updateBookmarkFull(bookmarkId, {
-      title: content.title || input.title,
+      title: finalTitle,
       contentHash,
       rawContentPath: rawPath,
       extractedText: content.text,

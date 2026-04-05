@@ -1,54 +1,85 @@
 import type { ExtractedContent } from './types.js';
-import { config } from '../config.js';
 import { getLogger } from '../utils/logger.js';
-import fs from 'node:fs';
 
 const logger = getLogger('extractor:twitter');
 
-interface RawCookie {
-  name: string;
-  value: string;
-  domain: string;
-  path?: string;
-  expirationDate?: number;
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: string;
+const USER_AGENT = 'bookmark-kb/1.0';
+const FX_BASE = 'https://api.fxtwitter.com/2';
+
+interface FxPhoto {
+  type: 'photo';
+  url: string;
+  width: number;
+  height: number;
 }
 
-interface TweetData {
-  tweetId: string;
+interface FxVideo {
+  type: 'video' | 'gif';
+  url: string;
+  thumbnail_url: string;
+  width: number;
+  height: number;
+  duration?: number;
+}
+
+interface FxFacet {
+  type: 'url' | 'media' | 'mention' | 'hashtag';
+  original: string;
+  replacement?: string;
+  display?: string;
+}
+
+interface FxTweet {
+  id: string;
+  url: string;
   text: string;
-  authorHandle: string;
-  timestamp: string;
-  mediaUrls: string[];
-  sharedUrls: string[];
-  isReply: boolean;
+  raw_text?: {
+    text: string;
+    facets?: FxFacet[];
+  };
+  author: {
+    screen_name: string;
+    name: string;
+    avatar_url?: string;
+    description?: string;
+  };
+  created_at: string;
+  created_timestamp: number;
+  media?: {
+    photos?: FxPhoto[];
+    videos?: FxVideo[];
+    all?: (FxPhoto | FxVideo)[];
+  };
+  replying_to?: {
+    screen_name: string;
+    status: string;
+  } | null;
+  replies: number;
+  reposts: number;
+  likes: number;
+  bookmarks: number;
+  views: number;
+  is_note_tweet: boolean;
+  lang: string;
+  card?: {
+    url: string;
+    title?: string;
+    description?: string;
+  };
 }
 
-const SAME_SITE_MAP: Record<string, 'Strict' | 'Lax' | 'None'> = {
-  strict: 'Strict', lax: 'Lax', no_restriction: 'None', none: 'None',
-};
+interface FxThreadResponse {
+  status: FxTweet;
+  thread?: FxTweet[];
+}
 
-function convertCookies(raw: RawCookie[]) {
-  const xCookies = raw.filter(c =>
-    c.domain.includes('twitter.com') || c.domain.includes('x.com')
-  );
-  return xCookies.map(c => ({
-    name: c.name,
-    value: c.value,
-    domain: c.domain,
-    path: c.path || '/',
-    ...(c.expirationDate ? { expires: Math.floor(c.expirationDate) } : {}),
-    httpOnly: c.httpOnly ?? false,
-    secure: c.secure ?? true,
-    sameSite: SAME_SITE_MAP[c.sameSite || ''] || 'None' as const,
-  }));
+interface FxStatusResponse {
+  status: FxTweet;
 }
 
 /**
- * Extract a tweet or thread using Playwright with cookies.
- * Falls back to syndication API if cookies are unavailable.
+ * Extract a tweet or thread via FxTwitter API.
+ * Falls back to syndication API for single tweets if FxTwitter is down.
  */
 export async function extractTwitter(url: string, sourceMetadata?: Record<string, unknown>): Promise<ExtractedContent> {
   logger.info({ url }, 'Extracting tweet/thread');
@@ -58,21 +89,15 @@ export async function extractTwitter(url: string, sourceMetadata?: Record<string
     throw new Error(`Could not extract tweet ID from URL: ${url}`);
   }
 
-  // If we have collector metadata with tweet text but it's short, still try thread extraction
-  const collectorText = sourceMetadata?.tweetText as string | undefined;
-  const authorFromCollector = sourceMetadata?.authorHandle as string | undefined;
-
-  // Try Playwright thread extraction first (needs cookies)
-  const hasCookies = fs.existsSync(config.twitter.cookiesPath);
-  if (hasCookies) {
-    try {
-      return await extractThread(url, tweetId, sourceMetadata);
-    } catch (err) {
-      logger.warn({ tweetId, err }, 'Playwright thread extraction failed, trying fallback');
-    }
+  // Try FxTwitter thread endpoint first (returns thread + focal tweet)
+  try {
+    const result = await extractViaFxTwitter(tweetId);
+    if (result) return result;
+  } catch (err) {
+    logger.warn({ tweetId, err }, 'FxTwitter extraction failed');
   }
 
-  // Fallback: syndication API (single tweet only)
+  // Fallback: syndication API (single tweet only, no thread)
   try {
     const result = await extractViaSyndication(tweetId);
     if (result) return result;
@@ -80,7 +105,9 @@ export async function extractTwitter(url: string, sourceMetadata?: Record<string
     logger.warn({ tweetId }, 'Syndication API failed');
   }
 
-  // Last resort: use collector data if available
+  // Last resort: use collector metadata if available
+  const collectorText = sourceMetadata?.tweetText as string | undefined;
+  const authorFromCollector = sourceMetadata?.authorHandle as string | undefined;
   if (collectorText) {
     return {
       title: `Tweet by @${authorFromCollector || 'unknown'}`,
@@ -93,161 +120,141 @@ export async function extractTwitter(url: string, sourceMetadata?: Record<string
 
   return {
     title: `Tweet ${tweetId}`,
-    text: `Tweet from ${url}. Content could not be extracted.`,
+    text: `Tweet from https://x.com/i/status/${tweetId}. Content could not be extracted.`,
     metadata: { tweetId },
   };
 }
 
 /**
- * Use Playwright to load a tweet page and extract the full thread.
+ * Extract via FxTwitter API — handles both threads and single tweets.
  */
-async function extractThread(
-  url: string,
-  tweetId: string,
-  sourceMetadata?: Record<string, unknown>,
-): Promise<ExtractedContent> {
-  const { chromium } = await import('playwright');
-  const browser = await chromium.launch({ headless: true });
+async function extractViaFxTwitter(tweetId: string): Promise<ExtractedContent | null> {
+  // Try thread endpoint first
+  const threadResp = await fetch(`${FX_BASE}/thread/${tweetId}`, {
+    headers: { 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(20_000),
+  });
 
-  try {
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  if (!threadResp.ok) {
+    // Fall back to single status endpoint
+    const statusResp = await fetch(`${FX_BASE}/status/${tweetId}`, {
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(15_000),
     });
+    if (!statusResp.ok) return null;
 
-    const cookieData = JSON.parse(fs.readFileSync(config.twitter.cookiesPath, 'utf-8'));
-    const cookies = convertCookies(Array.isArray(cookieData) ? cookieData : []);
-    await context.addCookies(cookies);
-
-    const page = await context.newPage();
-
-    // Navigate to the tweet
-    const tweetUrl = url.startsWith('http') ? url : `https://x.com/i/status/${tweetId}`;
-    await page.goto(tweetUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-
-    // Wait for the main tweet to load
-    await page.waitForSelector('[data-testid="tweet"]', { timeout: 15_000 });
-
-    // Give the thread time to render
-    await page.waitForTimeout(2000);
-
-    // Find the tweet author handle from the main tweet
-    const mainAuthor = await page.evaluate(() => {
-      const mainTweet = document.querySelector('[data-testid="tweet"]');
-      if (!mainTweet) return '';
-      const authorLink = mainTweet.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null;
-      if (!authorLink) return '';
-      const href = authorLink.href;
-      // URL format: /username/status/id — extract username
-      const match = href.match(/\.com\/([^/]+)\/status\//);
-      return match?.[1] || '';
-    });
-
-    const author = mainAuthor || (sourceMetadata?.authorHandle as string) || '';
-
-    // Scroll to load the full thread if needed
-    let lastCount = 0;
-    for (let i = 0; i < 5; i++) {
-      const currentCount = await page.$$eval('[data-testid="tweet"]', els => els.length);
-      if (currentCount === lastCount && i > 0) break;
-      lastCount = currentCount;
-      await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
-      await page.waitForTimeout(1500);
-    }
-
-    // Extract all tweets on the page
-    const allTweets = await page.$$eval('[data-testid="tweet"]', (tweets) => {
-      return tweets.map(tweet => {
-        const textEl = tweet.querySelector('[data-testid="tweetText"]');
-        const linkEl = tweet.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null;
-        const timeEl = tweet.querySelector('time');
-        const authorEl = tweet.querySelector('[data-testid="User-Name"] a') as HTMLAnchorElement | null;
-
-        const href = linkEl?.href || '';
-        const id = href.match(/\/status\/(\d+)/)?.[1] || '';
-        const handle = authorEl?.href?.split('/').pop() || '';
-
-        // Get media
-        const images = Array.from(tweet.querySelectorAll('img[src*="pbs.twimg.com/media"]'))
-          .map(img => (img as HTMLImageElement).src);
-
-        // Get shared URLs (t.co links with titles)
-        const links = Array.from(tweet.querySelectorAll('a[href^="https://t.co"]'))
-          .map(a => (a as HTMLAnchorElement).getAttribute('title') || (a as HTMLAnchorElement).textContent || '')
-          .filter(u => u.startsWith('http') && !u.includes('twitter.com') && !u.includes('x.com'));
-
-        return {
-          tweetId: id,
-          text: textEl?.textContent || '',
-          authorHandle: handle,
-          timestamp: timeEl?.getAttribute('datetime') || '',
-          mediaUrls: images,
-          sharedUrls: links,
-          isReply: false,
-        };
-      });
-    }) as TweetData[];
-
-    await context.close();
-
-    // Filter to thread tweets: same author, appearing before the main tweet or as self-replies
-    const threadTweets = allTweets.filter(t =>
-      t.authorHandle.toLowerCase() === author.toLowerCase() && t.text.length > 0
-    );
-
-    // Deduplicate by tweetId
-    const seen = new Set<string>();
-    const uniqueTweets = threadTweets.filter(t => {
-      if (!t.tweetId || seen.has(t.tweetId)) return false;
-      seen.add(t.tweetId);
-      return true;
-    });
-
-    const isThread = uniqueTweets.length > 1;
-    const allMedia = uniqueTweets.flatMap(t => t.mediaUrls);
-    const allLinks = uniqueTweets.flatMap(t => t.sharedUrls);
-    const timestamp = uniqueTweets[0]?.timestamp || sourceMetadata?.timestamp as string || '';
-
-    // Build the text
-    let text: string;
-    if (isThread) {
-      text = uniqueTweets
-        .map((t, i) => `${i + 1}/${uniqueTweets.length} ${t.text}`)
-        .join('\n\n');
-    } else {
-      text = uniqueTweets[0]?.text || '';
-    }
-
-    const title = isThread
-      ? `Thread by @${author} (${uniqueTweets.length} tweets)`
-      : `Tweet by @${author}`;
-
-    return {
-      title,
-      text,
-      author,
-      publishedAt: timestamp || undefined,
-      images: allMedia.length > 0 ? allMedia : undefined,
-      links: allLinks.length > 0 ? allLinks : undefined,
-      metadata: {
-        ...sourceMetadata,
-        tweetId,
-        isThread,
-        threadLength: uniqueTweets.length,
-        tweetIds: uniqueTweets.map(t => t.tweetId),
-      },
-    };
-  } finally {
-    await browser.close();
+    const statusData = await statusResp.json() as FxStatusResponse;
+    return buildContent([statusData.status]);
   }
+
+  const data = await threadResp.json() as FxThreadResponse;
+  const tweets = data.thread && data.thread.length > 0
+    ? data.thread
+    : [data.status];
+
+  return buildContent(tweets);
 }
 
+/**
+ * Build ExtractedContent from an array of FxTweet objects.
+ */
+function buildContent(tweets: FxTweet[]): ExtractedContent {
+  const author = tweets[0].author;
+  const isThread = tweets.length > 1;
+
+  // Collect all media and links across the thread
+  const allImages: string[] = [];
+  const allLinks: string[] = [];
+
+  // Build text with full content for each tweet
+  const parts: string[] = [];
+
+  for (let i = 0; i < tweets.length; i++) {
+    const tweet = tweets[i];
+    const prefix = isThread ? `**${i + 1}/${tweets.length}**\n` : '';
+
+    // Use the resolved text (URLs already expanded from t.co)
+    let tweetText = tweet.text;
+
+    // Collect photos
+    const photos = tweet.media?.photos || [];
+    for (const photo of photos) {
+      allImages.push(photo.url);
+    }
+
+    // Collect videos (store thumbnail + note the video)
+    const videos = tweet.media?.videos || [];
+    for (const video of videos) {
+      if (video.thumbnail_url) allImages.push(video.thumbnail_url);
+      allLinks.push(video.url);
+    }
+
+    // Collect external URLs from facets
+    const facets = tweet.raw_text?.facets || [];
+    for (const facet of facets) {
+      if (facet.type === 'url' && facet.replacement) {
+        allLinks.push(facet.replacement);
+      }
+    }
+
+    // Collect card URL if present
+    if (tweet.card?.url) {
+      allLinks.push(tweet.card.url);
+    }
+
+    // Add image references inline
+    const photoLines = photos.map(p => `![](${p.url})`).join('\n');
+    const videoLines = videos.map(v => `[Video](${v.url})`).join('\n');
+    const mediaBlock = [photoLines, videoLines].filter(Boolean).join('\n');
+
+    const block = [prefix + tweetText, mediaBlock].filter(Boolean).join('\n\n');
+    parts.push(block);
+  }
+
+  const text = parts.join('\n\n---\n\n');
+
+  // Deduplicate links
+  const uniqueLinks = [...new Set(allLinks)].filter(l =>
+    !l.includes('x.com/') && !l.includes('twitter.com/')
+  );
+
+  const title = isThread
+    ? `Thread by @${author.screen_name} (${tweets.length} tweets)`
+    : `Tweet by @${author.screen_name}`;
+
+  return {
+    title,
+    text,
+    author: author.screen_name,
+    publishedAt: tweets[0].created_at || undefined,
+    images: allImages.length > 0 ? allImages : undefined,
+    links: uniqueLinks.length > 0 ? uniqueLinks : undefined,
+    metadata: {
+      tweetId: tweets[0].id,
+      isThread,
+      threadLength: tweets.length,
+      tweetIds: tweets.map(t => t.id),
+      authorName: author.name,
+      authorAvatar: author.avatar_url,
+      engagement: {
+        replies: tweets.reduce((s, t) => s + t.replies, 0),
+        reposts: tweets.reduce((s, t) => s + t.reposts, 0),
+        likes: tweets.reduce((s, t) => s + t.likes, 0),
+        bookmarks: tweets.reduce((s, t) => s + t.bookmarks, 0),
+        views: tweets.reduce((s, t) => s + t.views, 0),
+      },
+    },
+  };
+}
+
+/**
+ * Fallback: syndication API for a single tweet.
+ */
 async function extractViaSyndication(tweetId: string): Promise<ExtractedContent | null> {
   const resp = await fetch(
     `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&lang=en`,
     {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' },
       signal: AbortSignal.timeout(15_000),
     }
   );
@@ -258,11 +265,17 @@ async function extractViaSyndication(tweetId: string): Promise<ExtractedContent 
   const text = (data.text as string) || '';
   const user = data.user as Record<string, unknown> | undefined;
 
+  const mediaDetails = data.mediaDetails as Array<Record<string, unknown>> | undefined;
+  const images = mediaDetails
+    ?.filter(m => m.type === 'photo')
+    .map(m => (m.media_url_https as string) + '?name=orig') || [];
+
   return {
     title: `Tweet by @${user?.screen_name || 'unknown'}`,
     text,
     author: user?.screen_name as string | undefined,
     publishedAt: data.created_at as string | undefined,
-    metadata: { tweetId, ...data },
+    images: images.length > 0 ? images : undefined,
+    metadata: { tweetId },
   };
 }

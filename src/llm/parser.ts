@@ -3,6 +3,7 @@ import { getLogger } from '../utils/logger.js';
 const logger = getLogger('llm-parser');
 
 export interface Classification {
+  title?: string;
   category: string;
   subcategories: string[];
   summary: string;
@@ -70,7 +71,11 @@ export function parseClassification(raw: string): Classification {
 
   const language = typeof parsed.language === 'string' ? parsed.language : undefined;
 
+  const title = typeof parsed.title === 'string' && parsed.title.length > 0
+    ? parsed.title
+    : undefined;
+
   logger.debug({ category, keywords: keywords.length }, 'Classification parsed');
 
-  return { category, subcategories, summary, keywords, actionability, qualitySignal, language };
+  return { title, category, subcategories, summary, keywords, actionability, qualitySignal, language };
 }
