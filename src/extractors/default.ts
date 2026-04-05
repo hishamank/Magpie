@@ -187,9 +187,15 @@ async function extractWithPlaywright(url: string): Promise<ExtractedContent> {
 
   const browser = await getBrowser();
   const page = await browser.newPage();
+  page.setDefaultTimeout(30_000);
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30_000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    // Give JS a moment to render, but don't wait for full network idle
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {
+      logger.debug({ url }, 'networkidle not reached within 10s, proceeding with what we have');
+    });
+
     const html = await page.content();
 
     const { document } = parseHTML(html);

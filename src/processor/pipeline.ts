@@ -59,8 +59,14 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
   updateBookmarkStatus(bookmarkId, 'processing');
 
   try {
-    // Step 1: Extract content
-    const content = await extractContent(input.url, input.sourceMetadata);
+    // Step 1: Extract content (with overall timeout to prevent hangs)
+    const EXTRACT_TIMEOUT = 90_000; // 90s max for any single extraction
+    const content = await Promise.race([
+      extractContent(input.url, input.sourceMetadata),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Extraction timed out after ${EXTRACT_TIMEOUT / 1000}s`)), EXTRACT_TIMEOUT),
+      ),
+    ]);
 
     // Step 2: Content-based dedup check
     const contentHash = computeSimhash(content.text);
