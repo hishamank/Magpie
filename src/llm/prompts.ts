@@ -24,7 +24,7 @@ ${contentText}
 Classify this into the following JSON structure:
 {
   "title": "<short, descriptive title for this content — NOT the author name or 'Thread by @x', but a real title describing the topic, e.g. '12 Python Libraries for Free Market Data' or 'Building RAG Pipelines with LangChain'>",
-  "category": "<one of: tools, article, guide, paper, tutorial, recipe, trading, movie, book, tweet-thread, repo, video-essay, tip, news, opinion, other>",
+  "category": "<one of: tool, article, guide, paper, tutorial, recipe, trading, movie, book, tweet-thread, repo, video-essay, tip, news, opinion, music, meme, entertainment, other>",
   "subcategories": ["<up to 3 more specific subcategories>"],
   "summary": "<2-3 sentence summary of what this content is about and why it's useful>",
   "keywords": ["<5-10 specific, descriptive keywords — not generic words like 'interesting' or 'technology', but specific concepts like 'RAG-pipeline', 'dividend-investing', 'nextjs-middleware', 'home-automation'>"],

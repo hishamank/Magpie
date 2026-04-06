@@ -16,7 +16,7 @@ export interface Classification {
 const VALID_CATEGORIES = new Set([
   'tool', 'article', 'guide', 'paper', 'tutorial', 'recipe',
   'trading', 'movie', 'book', 'tweet-thread', 'repo', 'video-essay',
-  'tip', 'news', 'opinion', 'other',
+  'tip', 'news', 'opinion', 'music', 'meme', 'entertainment', 'other',
 ]);
 
 const VALID_ACTIONABILITY = new Set(['reference', 'to-read', 'to-watch', 'to-try', 'to-buy']);

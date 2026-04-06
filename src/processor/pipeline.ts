@@ -18,6 +18,7 @@ import {
   incrementQueueAttempt,
   removeFromQueue,
   addToProcessingQueue,
+  deleteBookmark,
 } from '../db/queries.js';
 import { normalizeUrl, hashUrl } from '../processor/dedup.js';
 import type { BookmarkInput } from '../collectors/types.js';
@@ -101,6 +102,9 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     // Step 7: Update database
     // Prefer LLM-generated title (descriptive) over extractor title (often generic for tweets)
     const finalTitle = classification.title || content.title || input.title;
+    // Pick the best thumbnail: first image from extraction (og:image, twitter:image, or YouTube thumbnail)
+    const thumbnail = content.images?.[0];
+
     updateBookmarkFull(bookmarkId, {
       title: finalTitle,
       contentHash,
@@ -112,6 +116,7 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
       summary: finalSummary,
       actionability: classification.actionability,
       qualitySignal: classification.qualitySignal,
+      thumbnail,
       processedAt: new Date().toISOString(),
       status: 'completed',
     });
@@ -136,9 +141,35 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
 
     logger.info({ url: input.url, category: classification.category }, 'Bookmark processed successfully');
   } catch (err) {
+    const message = (err as Error).message || '';
+
+    // Detect permanently unavailable content
+    if (isUnavailable(message)) {
+      logger.warn({ url: input.url }, 'Content permanently unavailable, deleting bookmark');
+      deleteBookmark(bookmarkId);
+      return;
+    }
+
     logger.error({ url: input.url, err }, 'Failed to process bookmark');
-    updateBookmarkStatus(bookmarkId, 'failed', (err as Error).message);
+    updateBookmarkStatus(bookmarkId, 'failed', message);
   }
+}
+
+const UNAVAILABLE_PATTERNS = [
+  /video unavailable/i,
+  /private video/i,
+  /video has been removed/i,
+  /account.*terminated/i,
+  /this tweet.*deleted/i,
+  /this post.*unavailable/i,
+  /HTTP 404/i,
+  /HTTP 410/i,
+  /page not found/i,
+  /content.*not available/i,
+];
+
+function isUnavailable(errorMessage: string): boolean {
+  return UNAVAILABLE_PATTERNS.some(p => p.test(errorMessage));
 }
 
 /**

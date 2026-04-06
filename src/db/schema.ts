@@ -101,5 +101,12 @@ export function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_processing_queue_next ON processing_queue(next_attempt_at);
   `);
 
+  // Migrations — safe to re-run
+  const cols = db.prepare("PRAGMA table_info(bookmarks)").all() as { name: string }[];
+  const colNames = new Set(cols.map(c => c.name));
+  if (!colNames.has('thumbnail')) {
+    db.exec("ALTER TABLE bookmarks ADD COLUMN thumbnail TEXT");
+  }
+
   logger.info('Database schema initialized');
 }

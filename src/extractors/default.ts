@@ -3,6 +3,7 @@ import { parseHTML } from 'linkedom';
 import type { ExtractedContent } from './types.js';
 import { detectIssues, tryBypass } from './bypass.js';
 import { logExtraction } from './extraction-log.js';
+import { extractMeta } from './meta.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:default');
@@ -136,6 +137,9 @@ async function fetchAndParse(url: string): Promise<{
   const html = await response.text();
   const responseUrl = response.url; // final URL after redirects
 
+  // Extract meta tags before Readability modifies the DOM
+  const meta = extractMeta(html);
+
   const { document } = parseHTML(html);
   Object.defineProperty(document, 'baseURI', { value: url });
 
@@ -149,11 +153,15 @@ async function fetchAndParse(url: string): Promise<{
   const images: string[] = [];
   const links: string[] = [];
 
+  // Lead with og:image / twitter:image as the primary thumbnail
+  const thumbnail = meta.ogImage || meta.twitterImage;
+  if (thumbnail) images.push(thumbnail);
+
   if (article.content) {
     const { document: contentDoc } = parseHTML(article.content);
     for (const img of contentDoc.querySelectorAll('img')) {
       const src = img.getAttribute('src');
-      if (src) images.push(src);
+      if (src && src !== thumbnail) images.push(src);
     }
     for (const a of contentDoc.querySelectorAll('a')) {
       const href = a.getAttribute('href');
@@ -168,12 +176,19 @@ async function fetchAndParse(url: string): Promise<{
 
   return {
     content: {
-      title: article.title || '',
+      title: article.title || meta.ogTitle || '',
       text,
       html: article.content || undefined,
-      author: article.byline || undefined,
+      author: article.byline || meta.metaAuthor || undefined,
       images,
       links,
+      metadata: {
+        ogDescription: meta.ogDescription,
+        ogSiteName: meta.ogSiteName,
+        ogType: meta.ogType,
+        metaKeywords: meta.metaKeywords,
+        canonical: meta.canonical,
+      },
     },
     html,
     responseUrl,

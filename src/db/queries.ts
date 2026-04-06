@@ -21,6 +21,7 @@ export interface BookmarkRow {
   collected_at: string;
   processed_at: string | null;
   obsidian_path: string | null;
+  thumbnail: string | null;
   status: string;
   error_message: string | null;
   created_at: string;
@@ -82,6 +83,7 @@ export interface UpdateBookmarkFullParams {
   summary?: string;
   actionability?: string;
   qualitySignal?: string;
+  thumbnail?: string;
   processedAt?: string;
   status?: string;
 }
@@ -100,6 +102,7 @@ export function updateBookmarkFull(id: number, params: UpdateBookmarkFullParams)
       summary = COALESCE(?, summary),
       actionability = COALESCE(?, actionability),
       quality_signal = COALESCE(?, quality_signal),
+      thumbnail = COALESCE(?, thumbnail),
       processed_at = COALESCE(?, processed_at),
       status = COALESCE(?, status),
       updated_at = datetime('now')
@@ -115,6 +118,7 @@ export function updateBookmarkFull(id: number, params: UpdateBookmarkFullParams)
     params.summary ?? null,
     params.actionability ?? null,
     params.qualitySignal ?? null,
+    params.thumbnail ?? null,
     params.processedAt ?? null,
     params.status ?? null,
     id,
@@ -163,6 +167,14 @@ export function incrementQueueAttempt(bookmarkId: number): void {
 export function removeFromQueue(bookmarkId: number): void {
   const db = getDb();
   db.prepare('DELETE FROM processing_queue WHERE bookmark_id = ?').run(bookmarkId);
+}
+
+export function deleteBookmark(bookmarkId: number): void {
+  const db = getDb();
+  db.prepare('DELETE FROM processing_queue WHERE bookmark_id = ?').run(bookmarkId);
+  db.prepare('DELETE FROM bookmark_keywords WHERE bookmark_id = ?').run(bookmarkId);
+  db.prepare('DELETE FROM bookmark_relations WHERE bookmark_a_id = ? OR bookmark_b_id = ?').run(bookmarkId, bookmarkId);
+  db.prepare('DELETE FROM bookmarks WHERE id = ?').run(bookmarkId);
 }
 
 export function getBookmarkById(id: number): BookmarkRow | undefined {

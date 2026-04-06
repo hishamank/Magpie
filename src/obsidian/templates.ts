@@ -28,6 +28,9 @@ export function getCategoryFolder(category: string | null): string {
     'tip': 'articles',
     'news': 'articles',
     'opinion': 'articles',
+    'music': 'entertainment',
+    'meme': 'entertainment',
+    'entertainment': 'entertainment',
   };
   return map[category || ''] || 'articles';
 }
@@ -84,9 +87,16 @@ export function buildNoteContent(ctx: NoteContext): string {
   lines.push(`quality: ${bookmark.quality_signal || 'standard'}`);
   lines.push(`collected: ${(bookmark.collected_at || bookmark.created_at).slice(0, 10)}`);
   if (bookmark.processed_at) lines.push(`processed: ${bookmark.processed_at.slice(0, 10)}`);
+  if (bookmark.thumbnail) lines.push(`thumbnail: "${bookmark.thumbnail}"`);
   lines.push(`status: ${bookmark.actionability || 'reference'}`);
   lines.push('---');
   lines.push('');
+
+  // Thumbnail
+  if (bookmark.thumbnail) {
+    lines.push(`![](${bookmark.thumbnail})`);
+    lines.push('');
+  }
 
   // Summary
   if (bookmark.summary) {
@@ -96,40 +106,43 @@ export function buildNoteContent(ctx: NoteContext): string {
     lines.push('');
   }
 
-  // Key content (excerpt from extracted text)
+  // Key content (full extracted text)
   if (bookmark.extracted_text) {
     lines.push('## Key Content');
     lines.push('');
-    const excerpt = bookmark.extracted_text.slice(0, 2000);
-    lines.push(`> ${excerpt.split('\n').join('\n> ')}`);
+    lines.push(bookmark.extracted_text);
     lines.push('');
   }
 
-  // Related bookmarks — use enriched descriptions when available
+  // Related bookmarks — only include those with existing vault notes
+  const validRelated = related.filter(r => r.obsidian_path);
+
   if (enrichment && enrichment.relations.length > 0) {
+    // Filter enrichment relations to only those with vault notes
+    const validEnriched = enrichment.relations.filter(r => {
+      return validRelated.some(vr => vr.id === r.bookmarkId);
+    });
+
+    if (validEnriched.length > 0 || validRelated.length > 0) {
+      lines.push('## Related Bookmarks');
+      lines.push('');
+      for (const rel of validEnriched) {
+        lines.push(`- [[${rel.noteName}|${rel.title}]] — ${rel.relationship}`);
+      }
+      const enrichedIds = new Set(validEnriched.map(r => r.bookmarkId));
+      for (const rel of validRelated) {
+        if (enrichedIds.has(rel.id)) continue;
+        const noteName = rel.obsidian_path!.replace(/\.md$/, '').split('/').pop()!;
+        const sharedKws = JSON.parse(rel.shared_keywords) as string[];
+        lines.push(`- [[${noteName}]] — shares keywords: ${sharedKws.join(', ')}`);
+      }
+      lines.push('');
+    }
+  } else if (validRelated.length > 0) {
     lines.push('## Related Bookmarks');
     lines.push('');
-    for (const rel of enrichment.relations) {
-      lines.push(`- [[${rel.noteName}|${rel.title}]] — ${rel.relationship}`);
-    }
-    // Also include any keyword-linked relations not covered by enrichment
-    const enrichedIds = new Set(enrichment.relations.map(r => r.bookmarkId));
-    for (const rel of related) {
-      if (enrichedIds.has(rel.id)) continue;
-      const noteName = rel.obsidian_path
-        ? rel.obsidian_path.replace(/\.md$/, '').split('/').pop()
-        : slugify(rel.title || 'unknown');
-      const sharedKws = JSON.parse(rel.shared_keywords) as string[];
-      lines.push(`- [[${noteName}]] — shares keywords: ${sharedKws.join(', ')}`);
-    }
-    lines.push('');
-  } else if (related.length > 0) {
-    lines.push('## Related Bookmarks');
-    lines.push('');
-    for (const rel of related) {
-      const noteName = rel.obsidian_path
-        ? rel.obsidian_path.replace(/\.md$/, '').split('/').pop()
-        : slugify(rel.title || 'unknown');
+    for (const rel of validRelated) {
+      const noteName = rel.obsidian_path!.replace(/\.md$/, '').split('/').pop()!;
       const sharedKws = JSON.parse(rel.shared_keywords) as string[];
       lines.push(`- [[${noteName}]] — shares keywords: ${sharedKws.join(', ')}`);
     }

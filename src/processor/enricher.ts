@@ -52,7 +52,8 @@ export async function enrichRelationships(
   for (let i = 0; i < related.length; i++) {
     const rel = related[i];
     const bookmark = getBookmarkById(rel.id);
-    if (!bookmark) continue;
+    // Skip bookmarks that don't exist, aren't processed, or have no vault note
+    if (!bookmark || bookmark.status !== 'completed' || !bookmark.obsidian_path) continue;
 
     const noteName = buildNoteName(bookmark);
     const sharedKws = JSON.parse(rel.shared_keywords) as string[];
