@@ -2,6 +2,7 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import type { ExtractedContent } from './types.js';
 import { tryBypass } from './bypass.js';
+import { htmlToMarkdown } from './formatter.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:medium');
@@ -65,6 +66,8 @@ async function extractViaFreedium(url: string): Promise<ExtractedContent> {
   let text = '';
   let author: string | undefined;
 
+  let markdown: string | undefined;
+
   if (mainContent) {
     // Extract title — try h1 in content, then page title, then og:title
     const h1 = mainContent.querySelector('h1');
@@ -83,6 +86,9 @@ async function extractViaFreedium(url: string): Promise<ExtractedContent> {
       .replace(/\n{3,}/g, '\n\n')
       .replace(/[ \t]+/g, ' ')
       .trim();
+
+    // Convert to markdown
+    markdown = htmlToMarkdown(mainContent.innerHTML, url);
   }
 
   // If .main-content didn't work, try Readability on the full page
@@ -98,6 +104,9 @@ async function extractViaFreedium(url: string): Promise<ExtractedContent> {
         .replace(/[ \t]+/g, ' ')
         .trim();
       author = article.byline || undefined;
+      if (article.content) {
+        markdown = htmlToMarkdown(article.content, url);
+      }
     }
   }
 
@@ -122,6 +131,7 @@ async function extractViaFreedium(url: string): Promise<ExtractedContent> {
   return {
     title,
     text,
+    markdown,
     author,
     metadata: { extractedVia: 'freedium' },
   };
@@ -159,9 +169,14 @@ async function extractDirect(url: string): Promise<ExtractedContent> {
     .replace(/[ \t]+/g, ' ')
     .trim();
 
+  const markdown = article.content
+    ? htmlToMarkdown(article.content, url)
+    : undefined;
+
   return {
     title: article.title || '',
     text,
+    markdown,
     author: article.byline || undefined,
     metadata: { extractedVia: 'direct', possiblyPaywalled: true },
   };

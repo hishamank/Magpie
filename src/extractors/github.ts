@@ -35,16 +35,19 @@ export async function extractGitHub(url: string, sourceMetadata?: Record<string,
 
   const repoData = await repoResp.json() as Record<string, unknown>;
 
-  // Fetch README
-  let readmeText = '';
+  // Fetch README (keep full markdown for LLM consumption)
+  let readmeMarkdown = '';
+  let readmePlain = '';
   try {
     const readmeResp = await fetch(`https://api.github.com/repos/${owner}/${repoName}/readme`, {
       headers: { ...headers, 'Accept': 'application/vnd.github.v3.raw' },
       signal: AbortSignal.timeout(15_000),
     });
     if (readmeResp.ok) {
-      readmeText = await readmeResp.text();
-      readmeText = readmeText
+      readmeMarkdown = await readmeResp.text();
+      readmeMarkdown = readmeMarkdown.replace(/\n{3,}/g, '\n\n').trim();
+      // Plain text version for simhash compatibility
+      readmePlain = readmeMarkdown
         .replace(/!\[([^\]]*)\]\([^)]+\)/g, '')
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
         .replace(/#{1,6}\s+/g, '')
@@ -69,9 +72,20 @@ export async function extractGitHub(url: string, sourceMetadata?: Record<string,
     topics.length > 0 ? `Topics: ${topics.join(', ')}` : '',
   ].filter(Boolean).join('\n');
 
+  // Markdown version preserves README formatting
+  const markdownMeta = [
+    `**${owner}/${repoName}** — ${description || 'GitHub Repository'}`,
+    '',
+    `**Language:** ${language} | **Stars:** ${stars.toLocaleString()} | **Forks:** ${forks.toLocaleString()}`,
+    topics.length > 0 ? `**Topics:** ${topics.join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+
+  const markdown = markdownMeta + (readmeMarkdown ? '\n\n---\n\n' + readmeMarkdown : '');
+
   return {
     title: `${owner}/${repoName}: ${description || 'GitHub Repository'}`,
-    text: metaBlock + (readmeText ? '\n\n' + readmeText : ''),
+    text: metaBlock + (readmePlain ? '\n\n' + readmePlain : ''),
+    markdown,
     author: owner,
     metadata: {
       ...sourceMetadata,

@@ -1,4 +1,4 @@
-import type { ExtractedContent } from './types.js';
+import type { ExtractedContent, MediaAttachment } from './types.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:twitter');
@@ -222,13 +222,38 @@ function buildContent(tweets: FxTweet[]): ExtractedContent {
     ? `Thread by @${author.screen_name} (${tweets.length} tweets)`
     : `Tweet by @${author.screen_name}`;
 
+  // Build markdown with metadata header
+  const totalLikes = tweets.reduce((s, t) => s + t.likes, 0);
+  const totalReposts = tweets.reduce((s, t) => s + t.reposts, 0);
+  const totalViews = tweets.reduce((s, t) => s + t.views, 0);
+  const metaHeader = [
+    `**Author:** @${author.screen_name} (${author.name})`,
+    `**Likes:** ${totalLikes} | **Reposts:** ${totalReposts} | **Views:** ${totalViews}`,
+    tweets[0].created_at ? `**Date:** ${tweets[0].created_at}` : '',
+  ].filter(Boolean).join('\n');
+
+  const markdown = metaHeader + '\n\n---\n\n' + text;
+
+  // Build media attachments
+  const media: MediaAttachment[] = [];
+  for (const img of allImages) {
+    media.push({ type: 'image', sourceUrl: img });
+  }
+  for (const tweet of tweets) {
+    for (const video of (tweet.media?.videos || [])) {
+      media.push({ type: 'video', sourceUrl: video.url });
+    }
+  }
+
   return {
     title,
     text,
+    markdown,
     author: author.screen_name,
     publishedAt: tweets[0].created_at || undefined,
     images: allImages.length > 0 ? allImages : undefined,
     links: uniqueLinks.length > 0 ? uniqueLinks : undefined,
+    media: media.length > 0 ? media : undefined,
     metadata: {
       tweetId: tweets[0].id,
       isThread,
@@ -238,10 +263,10 @@ function buildContent(tweets: FxTweet[]): ExtractedContent {
       authorAvatar: author.avatar_url,
       engagement: {
         replies: tweets.reduce((s, t) => s + t.replies, 0),
-        reposts: tweets.reduce((s, t) => s + t.reposts, 0),
-        likes: tweets.reduce((s, t) => s + t.likes, 0),
+        reposts: totalReposts,
+        likes: totalLikes,
         bookmarks: tweets.reduce((s, t) => s + t.bookmarks, 0),
-        views: tweets.reduce((s, t) => s + t.views, 0),
+        views: totalViews,
       },
     },
   };

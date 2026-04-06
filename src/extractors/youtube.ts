@@ -1,4 +1,5 @@
-import type { ExtractedContent } from './types.js';
+import type { ExtractedContent, MediaAttachment } from './types.js';
+import { textToMarkdown } from './formatter.js';
 import { runCommand } from '../utils/subprocess.js';
 import { config } from '../config.js';
 import { getLogger } from '../utils/logger.js';
@@ -99,12 +100,35 @@ export async function extractYouTube(url: string, sourceMetadata?: Record<string
       ? text  // chapters are already inline
       : text + chapterList;
 
+    // Build structured markdown with metadata header
+    const metaLines = [
+      `**Channel:** ${channel}`,
+      `**Duration:** ${formatDuration(duration)}`,
+      uploadDate ? `**Published:** ${uploadDate.slice(0, 4)}-${uploadDate.slice(4, 6)}-${uploadDate.slice(6, 8)}` : '',
+      viewCount !== undefined ? `**Views:** ${viewCount.toLocaleString()}` : '',
+      tags.length > 0 ? `**Tags:** ${tags.slice(0, 10).join(', ')}` : '',
+    ].filter(Boolean);
+
+    const markdown = textToMarkdown(
+      metaLines.join(' | ') + '\n\n---\n\n' + finalText
+    );
+
+    // Track video as media attachment
+    const media: MediaAttachment[] = [
+      { type: 'video', sourceUrl: url },
+    ];
+    if (thumbnailUrl) {
+      media.push({ type: 'image', sourceUrl: thumbnailUrl, altText: 'Video thumbnail' });
+    }
+
     return {
       title,
       text: finalText,
+      markdown,
       author: channel,
       publishedAt: uploadDate ? `${uploadDate.slice(0, 4)}-${uploadDate.slice(4, 6)}-${uploadDate.slice(6, 8)}` : undefined,
       images: thumbnailUrl ? [thumbnailUrl] : undefined,
+      media,
       metadata: {
         ...sourceMetadata,
         videoId,

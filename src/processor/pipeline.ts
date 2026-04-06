@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { extractContent, closeBrowser } from '../extractors/registry.js';
+import { downloadAllMedia } from '../extractors/media.js';
+import { processAllMedia, inlineMediaContent } from '../extractors/media-processing.js';
+import { cleanupMarkdown } from '../extractors/cleanup.js';
 import { classifyContent } from './classifier.js';
 import { archiveContent } from './archiver.js';
 import { processKeywords, updateKeywordLinks, computeRelatedBookmarks } from './keywords.js';
@@ -18,7 +21,9 @@ import {
   incrementQueueAttempt,
   removeFromQueue,
   addToProcessingQueue,
-  deleteBookmark,
+  markContentRemoved,
+  requeueWithDelay,
+  updateExtractionStatus,
 } from '../db/queries.js';
 import { normalizeUrl, hashUrl } from '../processor/dedup.js';
 import type { BookmarkInput } from '../collectors/types.js';
@@ -62,7 +67,7 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
   try {
     // Step 1: Extract content (with overall timeout to prevent hangs)
     const EXTRACT_TIMEOUT = 90_000; // 90s max for any single extraction
-    const content = await Promise.race([
+    const result = await Promise.race([
       extractContent(input.url, input.sourceMetadata),
       new Promise<never>((_, reject) =>
         setTimeout(async () => {
@@ -73,21 +78,75 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
       ),
     ]);
 
-    // Step 2: Content-based dedup check
+    // Step 2: Route on extraction status
+    updateExtractionStatus(bookmarkId, result.status);
+
+    switch (result.status) {
+      case 'content_removed':
+        logger.warn({ url: input.url, detail: result.statusDetail }, 'Content permanently removed');
+        markContentRemoved(bookmarkId);
+        return;
+
+      case 'rate_limited': {
+        const delay = result.retryAfter ?? 300;
+        logger.warn({ url: input.url, retryAfter: delay }, 'Rate limited, requeuing');
+        requeueWithDelay(bookmarkId, delay);
+        return;
+      }
+
+      case 'paywall':
+        logger.warn({ url: input.url, detail: result.statusDetail }, 'Paywall detected, bypass failed');
+        updateBookmarkStatus(bookmarkId, 'paywall', result.statusDetail);
+        return;
+
+      case 'error':
+        logger.error({ url: input.url, detail: result.statusDetail }, 'Extraction failed');
+        updateBookmarkStatus(bookmarkId, 'failed', result.statusDetail);
+        return;
+
+      case 'success':
+        // Continue with processing pipeline below
+        break;
+    }
+
+    const content = result.content!;
+
+    // Step 3: Content-based dedup check
     const contentHash = computeSimhash(content.text);
 
-    // Step 3: Archive raw content
+    // Step 4: Download media (images, videos, audio)
+    const mediaResult = await downloadAllMedia(content, bookmarkId, input.source, input.url);
+    content.media = mediaResult.attachments;
+
+    // Step 5: Process media (OCR images, transcribe audio/video)
+    const hasTranscript = !!content.metadata?.hasTranscript;
+    content.media = await processAllMedia(bookmarkId, mediaResult.attachments, mediaResult.dbIds, {
+      hasExistingTranscript: hasTranscript,
+    });
+
+    // Step 5b: Inline media processing results into markdown
+    if (content.markdown && content.media.length > 0) {
+      content.markdown = inlineMediaContent(content.markdown, content.media);
+    }
+
+    // Step 6: LLM cleanup (only for noisy extractors that parse web HTML)
+    const handlerName = result.handlerName || 'default';
+    if (content.markdown && (handlerName === 'default' || handlerName === 'medium')) {
+      content.markdown = await cleanupMarkdown(content.markdown, content.title, input.url);
+    }
+
+    // Step 7: Archive raw content
     const rawPath = await archiveContent(bookmarkId, input.source, content);
 
-    // Step 4: Classify with LLM
+    // Step 8: Classify with LLM
     const classification = await classifyContent(content, input);
 
-    // Step 5: Process keywords and linking
+    // Step 9: Process keywords and linking
     const keywordIds = await processKeywords(bookmarkId, classification.keywords);
     await updateKeywordLinks(keywordIds);
     await computeRelatedBookmarks(bookmarkId, keywordIds);
 
-    // Step 6: Enrich relationships with LLM (Phase A)
+    // Step 10: Enrich relationships with LLM
     const enrichment = await enrichRelationships(
       bookmarkId,
       classification.summary,
@@ -99,7 +158,7 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     // Use enriched summary if available, fall back to original
     const finalSummary = enrichment?.enrichedSummary || classification.summary;
 
-    // Step 7: Update database
+    // Step 11: Update database
     // Prefer LLM-generated title (descriptive) over extractor title (often generic for tweets)
     const finalTitle = classification.title || content.title || input.title;
     // Pick the best thumbnail: first image from extraction (og:image, twitter:image, or YouTube thumbnail)
@@ -121,14 +180,14 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
       status: 'completed',
     });
 
-    // Step 8: Compile Obsidian note (pass enrichment for rich relations)
+    // Step 12: Compile Obsidian note (pass enrichment for rich relations)
     const obsidianPath = await compileObsidianNote(bookmarkId, enrichment);
     updateObsidianPath(bookmarkId, obsidianPath);
 
-    // Step 9: Update index files
+    // Step 13: Update index files
     updateAllIndexFiles();
 
-    // Step 10: Append to operations log
+    // Step 14: Append to operations log
     appendToLog(
       content.title || input.title || '',
       classification.category,
@@ -142,34 +201,9 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     logger.info({ url: input.url, category: classification.category }, 'Bookmark processed successfully');
   } catch (err) {
     const message = (err as Error).message || '';
-
-    // Detect permanently unavailable content
-    if (isUnavailable(message)) {
-      logger.warn({ url: input.url }, 'Content permanently unavailable, deleting bookmark');
-      deleteBookmark(bookmarkId);
-      return;
-    }
-
     logger.error({ url: input.url, err }, 'Failed to process bookmark');
     updateBookmarkStatus(bookmarkId, 'failed', message);
   }
-}
-
-const UNAVAILABLE_PATTERNS = [
-  /video unavailable/i,
-  /private video/i,
-  /video has been removed/i,
-  /account.*terminated/i,
-  /this tweet.*deleted/i,
-  /this post.*unavailable/i,
-  /HTTP 404/i,
-  /HTTP 410/i,
-  /page not found/i,
-  /content.*not available/i,
-];
-
-function isUnavailable(errorMessage: string): boolean {
-  return UNAVAILABLE_PATTERNS.some(p => p.test(errorMessage));
 }
 
 /**

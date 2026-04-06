@@ -4,6 +4,7 @@ import type { ExtractedContent } from './types.js';
 import { detectIssues, tryBypass } from './bypass.js';
 import { logExtraction } from './extraction-log.js';
 import { extractMeta } from './meta.js';
+import { htmlToMarkdown } from './formatter.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:default');
@@ -174,11 +175,17 @@ async function fetchAndParse(url: string): Promise<{
     .replace(/[ \t]+/g, ' ')
     .trim();
 
+  // Convert article HTML to clean markdown for LLM consumption
+  const markdown = article.content
+    ? htmlToMarkdown(article.content, url)
+    : undefined;
+
   return {
     content: {
       title: article.title || meta.ogTitle || '',
       text,
       html: article.content || undefined,
+      markdown,
       author: article.byline || meta.metaAuthor || undefined,
       images,
       links,
@@ -232,10 +239,15 @@ async function extractWithPlaywright(url: string): Promise<ExtractedContent> {
       .replace(/[ \t]+/g, ' ')
       .trim();
 
+    const markdown = article.content
+      ? htmlToMarkdown(article.content, url)
+      : undefined;
+
     return {
       title: article.title || await page.title(),
       text,
       html: article.content || undefined,
+      markdown,
       author: article.byline || undefined,
     };
   } finally {

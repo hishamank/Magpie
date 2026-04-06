@@ -5,8 +5,8 @@ export function buildClassificationPrompt(
   content: ExtractedContent,
   input: BookmarkInput
 ): string {
-  // For very long content, send first 2000 + last 1000 chars
-  let contentText = content.text;
+  // Prefer markdown (preserves structure) over plain text
+  let contentText = content.markdown || content.text;
   if (contentText.length > 3000) {
     contentText = contentText.slice(0, 2000) + '\n\n[...]\n\n' + contentText.slice(-1000);
   }

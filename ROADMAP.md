@@ -129,10 +129,39 @@ Once the wiki is large enough, generate Q&A pairs from it and finetune a model t
 
 ---
 
+## Phase G — Expanded Ingestion & Tooling ("brain" CLI vision)
+
+**Effort:** Medium | **Value:** High — unlocks personal data sources beyond bookmarks
+
+Inspired by [this approach](https://x.com/) combining Karpathy's gist + steipete/summarize + yt-dlp + Tobi's qmd into a unified personal knowledge CLI:
+
+### New Data Sources:
+- **YouTube watch history** — Index personal YouTube data export (JSON), extract transcripts via yt-dlp, summarize via `summarize` CLI
+- **AI agent logs** — Ingest JSONL files from Claude, ChatGPT, and other AI agent conversations as knowledge artifacts
+- **X/Twitter archive** — Request full archive from X settings, ingest tweets, bookmarks, and likes as source material
+- **Podcast feeds** — Use `summarize` CLI for audio transcription and extraction
+
+### Tooling Integration:
+- **[steipete/summarize](https://github.com/steipete/summarize)** — Use as a fallback extractor (`summarize --extract`) and for media types we don't handle (podcasts, audio, non-YouTube video, slide extraction from video). Handles Firecrawl fallback for stubborn paywalls.
+- **[qmd](https://github.com/qmdnls/qmd)** — Markdown-native Q&A tool. Could power Phase D's query interface by running against the vault directly, complementing or replacing a custom LLM Q&A pipeline.
+- **yt-dlp** — Already used for YouTube; extend to handle broader video/audio sources
+
+### Vault Organization:
+- Consider domain/topic-based vaults (separate vaults for tech, finance, media, etc.) instead of one monolithic vault
+- Or use Obsidian folders + MOCs (Maps of Content) to achieve the same within a single vault
+
+### Relationship to Existing Phases:
+- Feeds into **Phase B** (Concept Pages) — more diverse sources means richer concept synthesis
+- Feeds into **Phase D** (Q&A) — qmd as a lightweight alternative before building a full custom pipeline
+- Extends **Phase E** (Tool-Augmented Research) — summarize CLI as an agent tool
+
+---
+
 ## Implementation Priority
 
 1. **Phase A** — Do this first. Small change, big improvement to Obsidian usability.
 2. **Phase B** — The highest-value phase. This is what turns bookmarks into knowledge.
-3. **Phase C** — Do this once Phase B is running and you have 20+ concept pages.
-4. **Phase D** — Can be started in parallel with Phase C.
-5. **Phase E & F** — Future exploration, not urgent.
+3. **Phase G** — Can start early in parallel. Adding `summarize` as a fallback extractor is quick; YouTube/X archive ingestion can be incremental.
+4. **Phase C** — Do this once Phase B is running and you have 20+ concept pages.
+5. **Phase D** — Can be started in parallel with Phase C. Evaluate qmd as a shortcut before building custom.
+6. **Phase E & F** — Future exploration, not urgent.

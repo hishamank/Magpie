@@ -51,6 +51,14 @@ export const config = {
   reddit: {
     accounts: parseRedditAccounts(),
   },
+  media: {
+    path: resolveFromRoot(process.env.MEDIA_PATH || './data/media'),
+    maxImageSizeMb: parseInt(process.env.MEDIA_MAX_IMAGE_SIZE_MB || '10', 10),
+    maxVideoSizeMb: parseInt(process.env.MEDIA_MAX_VIDEO_SIZE_MB || '500', 10),
+  },
+  whisper: {
+    model: process.env.WHISPER_MODEL || 'base',
+  },
   discord: {
     botToken: process.env.DISCORD_BOT_TOKEN || '',
     channelId: process.env.DISCORD_CHANNEL_ID || '',

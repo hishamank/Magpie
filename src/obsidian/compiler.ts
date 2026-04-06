@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
-import { getBookmarkById, getBookmarkKeywords, getRelatedBookmarks } from '../db/queries.js';
+import { getBookmarkById, getBookmarkKeywords, getRelatedBookmarks, getMediaAttachments } from '../db/queries.js';
 import { buildNoteContent, buildNoteName, getCategoryFolder } from './templates.js';
 import type { EnrichmentResult } from '../processor/enricher.js';
 import { getLogger } from '../utils/logger.js';
@@ -16,8 +16,9 @@ export async function compileObsidianNote(bookmarkId: number, enrichment?: Enric
 
   const keywords = getBookmarkKeywords(bookmarkId);
   const related = getRelatedBookmarks(bookmarkId);
+  const media = getMediaAttachments(bookmarkId);
 
-  const content = buildNoteContent({ bookmark, keywords, related, enrichment: enrichment ?? undefined });
+  const content = buildNoteContent({ bookmark, keywords, related, enrichment: enrichment ?? undefined, media });
 
   // Determine file path
   const folder = getCategoryFolder(bookmark.category);

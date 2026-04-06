@@ -18,12 +18,12 @@ export async function archiveContent(
 
   fs.mkdirSync(dir, { recursive: true });
 
-  // Save HTML content if available, otherwise save text
-  const ext = content.html ? 'html' : 'txt';
+  // Save markdown (preferred), HTML, or text
+  const ext = content.markdown ? 'md' : content.html ? 'html' : 'txt';
   const filename = `${bookmarkId}.${ext}`;
   const filePath = path.join(dir, filename);
 
-  const data = content.html || content.text;
+  const data = content.markdown || content.html || content.text;
   fs.writeFileSync(filePath, data, 'utf-8');
 
   // Return relative path from archive root
@@ -37,6 +37,7 @@ function getSourceDir(source: string): string {
     case 'twitter': return 'twitter';
     case 'youtube': return 'youtube';
     case 'github': return 'github';
+    case 'reddit': return 'reddit';
     case 'discord':
     case 'raindrop':
     case 'manual':

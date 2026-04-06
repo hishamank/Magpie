@@ -1,4 +1,4 @@
-import type { ExtractedContent } from './types.js';
+import type { ExtractedContent, MediaAttachment } from './types.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:reddit');
@@ -29,9 +29,12 @@ function extractFromMetadata(url: string, meta: Record<string, unknown>): Extrac
   if (meta.selftext) parts.push(meta.selftext as string);
   if (meta.commentBody) parts.push(meta.commentBody as string);
 
+  const text = parts.join('\n\n') || '';
+
   return {
     title,
-    text: parts.join('\n\n') || '',
+    text,
+    markdown: text, // Reddit content is already markdown
     author: meta.author as string | undefined,
     metadata: {
       subreddit: meta.subreddit,
@@ -110,16 +113,31 @@ function extractPost(data: Array<{ data: { children: Array<{ kind: string; data:
     parts.push(commentParts.join('\n\n'));
   }
 
+  const text = parts.filter(Boolean).join('\n\n');
+
+  // Discover media from post (gallery images, hosted videos)
+  const media: MediaAttachment[] = [];
+  const postUrl = postData.url as string || '';
+  const isSelf = postData.is_self as boolean;
+  if (!isSelf && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(postUrl)) {
+    media.push({ type: 'image', sourceUrl: postUrl });
+  }
+  if (!isSelf && /v\.redd\.it/i.test(postUrl)) {
+    media.push({ type: 'video', sourceUrl: postUrl });
+  }
+
   return {
     title: `r/${subreddit}: ${title}`,
-    text: parts.filter(Boolean).join('\n\n'),
+    text,
+    markdown: text, // Reddit content is already markdown
     author,
+    media: media.length > 0 ? media : undefined,
     metadata: {
       subreddit,
       score,
       numComments: postData.num_comments,
-      isLinkPost: !(postData.is_self as boolean),
-      externalUrl: postData.is_self ? undefined : postData.url,
+      isLinkPost: !isSelf,
+      externalUrl: isSelf ? undefined : postData.url,
     },
   };
 }

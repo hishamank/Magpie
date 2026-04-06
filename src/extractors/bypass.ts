@@ -1,6 +1,7 @@
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import type { ExtractedContent } from './types.js';
+import { htmlToMarkdown } from './formatter.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:bypass');
@@ -11,7 +12,7 @@ const GOOGLEBOT_UA = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google
 // --- Issue detection ---
 
 export interface ContentIssue {
-  type: 'login-redirect' | 'captcha' | 'cloudflare-challenge';
+  type: 'login-redirect' | 'captcha' | 'cloudflare-challenge' | 'paywall';
   detail: string;
 }
 
@@ -55,6 +56,14 @@ export function detectIssues(html: string, responseUrl?: string, originalUrl?: s
   // Cloudflare challenge page
   if (/cf-browser-verification|challenge-platform|cf_chl_opt|cf-challenge-running/i.test(htmlLower)) {
     issues.push({ type: 'cloudflare-challenge', detail: 'Cloudflare JS challenge detected' });
+  }
+
+  // Paywall indicators
+  if (/subscribe to (continue|read|unlock)|members[\s-]only|premium content|paywall/i.test(htmlLower)) {
+    issues.push({ type: 'paywall', detail: 'Paywall or subscription gate detected' });
+  }
+  if (/class=["'][^"']*paywall[^"']*["']/i.test(html) || /class=["'][^"']*subscriber-only[^"']*["']/i.test(html)) {
+    issues.push({ type: 'paywall', detail: 'Paywall CSS class detected' });
   }
 
   return issues;
@@ -203,10 +212,15 @@ function parseWithReadability(html: string, url: string): ExtractedContent {
     .replace(/[ \t]+/g, ' ')
     .trim();
 
+  const markdown = article.content
+    ? htmlToMarkdown(article.content, url)
+    : undefined;
+
   return {
     title: article.title || '',
     text,
     html: article.content || undefined,
+    markdown,
     author: article.byline || undefined,
   };
 }

@@ -1,4 +1,4 @@
-import type { Handler, ExtractedContent } from './types.js';
+import type { LegacyHandler, ExtractionResult, ExtractionStatus } from './types.js';
 import { extractDefault, closeBrowser } from './default.js';
 import { extractYouTube } from './youtube.js';
 import { extractTwitter } from './twitter.js';
@@ -12,11 +12,57 @@ import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:registry');
 
-// Domain → handler mapping
-const handlers = new Map<string, { handler: Handler; name: string }>();
+// Patterns that indicate content is permanently gone
+const UNAVAILABLE_PATTERNS = [
+  /video unavailable/i,
+  /private video/i,
+  /video has been removed/i,
+  /account.*terminated/i,
+  /this tweet.*deleted/i,
+  /this post.*unavailable/i,
+  /HTTP 404/i,
+  /HTTP 410/i,
+  /page not found/i,
+  /content.*not available/i,
+];
 
-function register(domains: string[], handler: Handler, name: string): void {
-  for (const d of domains) handlers.set(d, { handler, name });
+function classifyError(message: string): { status: ExtractionStatus; retryAfter?: number } {
+  // Rate limiting
+  if (/429|rate.?limit/i.test(message)) {
+    const retryMatch = message.match(/retry.?after:?\s*(\d+)/i);
+    return { status: 'rate_limited', retryAfter: retryMatch ? parseInt(retryMatch[1]) : 300 };
+  }
+
+  // Permanently unavailable
+  if (UNAVAILABLE_PATTERNS.some(p => p.test(message))) {
+    return { status: 'content_removed' };
+  }
+
+  return { status: 'error' };
+}
+
+/**
+ * Wrap a legacy handler (returns ExtractedContent) into one that returns ExtractionResult.
+ */
+function wrapLegacyHandler(handler: LegacyHandler): (url: string, sourceMetadata?: Record<string, unknown>) => Promise<ExtractionResult> {
+  return async (url, sourceMetadata) => {
+    try {
+      const content = await handler(url, sourceMetadata);
+      return { status: 'success', content };
+    } catch (err) {
+      const message = (err as Error).message || '';
+      const { status, retryAfter } = classifyError(message);
+      return { status, content: null, statusDetail: message, retryAfter };
+    }
+  };
+}
+
+// Domain → handler mapping
+const handlers = new Map<string, { handler: (url: string, sourceMetadata?: Record<string, unknown>) => Promise<ExtractionResult>; name: string }>();
+
+function register(domains: string[], handler: LegacyHandler, name: string): void {
+  const wrapped = wrapLegacyHandler(handler);
+  for (const d of domains) handlers.set(d, { handler: wrapped, name });
 }
 
 // Register all service handlers
@@ -40,7 +86,7 @@ register([
  * Resolve a URL to its handler by matching the domain.
  * Falls back to default handler and tracks unhandled domains.
  */
-function getHandler(url: string): { handler: Handler; handlerName: string; isDefault: boolean } {
+function getHandler(url: string): { handler: (url: string, sourceMetadata?: Record<string, unknown>) => Promise<ExtractionResult>; handlerName: string; isDefault: boolean } {
   const hostname = new URL(url).hostname.replace(/^www\./, '');
 
   // Direct match
@@ -61,13 +107,13 @@ function getHandler(url: string): { handler: Handler; handlerName: string; isDef
 
   // PDF check (by URL extension, not domain)
   if (/\.pdf(\?|$)/i.test(url)) {
-    return { handler: extractPdf, handlerName: 'pdf', isDefault: false };
+    return { handler: wrapLegacyHandler(extractPdf), handlerName: 'pdf', isDefault: false };
   }
 
   // Unhandled domain — track it so we know what to build next
   trackDomainHit(hostname);
 
-  return { handler: extractDefault, handlerName: 'default', isDefault: true };
+  return { handler: wrapLegacyHandler(extractDefault), handlerName: 'default', isDefault: true };
 }
 
 /**
@@ -92,8 +138,9 @@ function trackDomainHit(domain: string): void {
 /**
  * Main entry point: extract content from a URL.
  * Routes to the appropriate service handler, falls back to default.
+ * Returns a typed ExtractionResult with status information.
  */
-export async function extractContent(url: string, sourceMetadata?: Record<string, unknown>): Promise<ExtractedContent> {
+export async function extractContent(url: string, sourceMetadata?: Record<string, unknown>): Promise<ExtractionResult> {
   const { handler, handlerName, isDefault } = getHandler(url);
   const domain = new URL(url).hostname.replace(/^www\./, '');
 
@@ -101,45 +148,46 @@ export async function extractContent(url: string, sourceMetadata?: Record<string
     logger.info({ url, domain }, 'No dedicated handler, using default extractor');
   }
 
-  try {
-    const result = await handler(url, sourceMetadata);
+  const result = await handler(url, sourceMetadata);
 
-    // Default handler does its own logging (with bypass/issue tracking)
-    if (!isDefault) {
+  // Tag the result with handler name
+  result.handlerName = handlerName;
+
+  // Log the extraction attempt
+  logExtraction({
+    timestamp: new Date().toISOString(),
+    url, domain, handler: handlerName,
+    textLength: result.content?.text.length ?? 0,
+    issues: [],
+    bypassUsed: null, bypassSuccess: false,
+    finalMethod: result.status === 'success' ? 'direct' : `status:${result.status}`,
+    error: result.statusDetail,
+  });
+
+  // If a dedicated handler fails with an error, try the default as fallback
+  if (!isDefault && result.status === 'error') {
+    logger.warn({ url, detail: result.statusDetail }, 'Service handler failed, falling back to default extractor');
+
+    const fallbackResult = await wrapLegacyHandler(extractDefault)(url, sourceMetadata);
+    if (fallbackResult.status === 'success') {
+      fallbackResult.handlerName = 'default';
       logExtraction({
         timestamp: new Date().toISOString(),
-        url, domain, handler: handlerName,
-        textLength: result.text.length,
+        url, domain, handler: 'default',
+        textLength: fallbackResult.content?.text.length ?? 0,
         issues: [],
         bypassUsed: null, bypassSuccess: false,
-        finalMethod: 'direct',
+        finalMethod: 'fallback-default',
       });
+      return fallbackResult;
     }
-
-    return result;
-  } catch (err) {
-    // If a dedicated handler fails, try the default as fallback
-    if (!isDefault) {
-      logger.warn({ url, err }, 'Service handler failed, falling back to default extractor');
-
-      logExtraction({
-        timestamp: new Date().toISOString(),
-        url, domain, handler: handlerName,
-        textLength: 0,
-        issues: [],
-        bypassUsed: null, bypassSuccess: false,
-        finalMethod: 'handler-failed',
-        error: (err as Error).message,
-      });
-
-      return extractDefault(url, sourceMetadata);
-    }
-    throw err;
   }
+
+  return result;
 }
 
-/** Register a new handler at runtime */
-export function registerHandler(domains: string[], handler: Handler, name: string): void {
+/** Register a new handler at runtime (legacy signature) */
+export function registerHandler(domains: string[], handler: LegacyHandler, name: string): void {
   register(domains, handler, name);
 }
 

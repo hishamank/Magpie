@@ -1,4 +1,5 @@
 import type { ExtractedContent } from './types.js';
+import { textToMarkdown } from './formatter.js';
 import { runCommand } from '../utils/subprocess.js';
 import { getLogger } from '../utils/logger.js';
 import fs from 'node:fs';
@@ -48,6 +49,7 @@ export async function extractPdf(url: string, _sourceMetadata?: Record<string, u
     return {
       title,
       text,
+      markdown: textToMarkdown(text),
       metadata: { format: 'pdf', size: buffer.length },
     };
   } finally {

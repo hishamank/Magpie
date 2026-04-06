@@ -22,6 +22,7 @@ export interface BookmarkRow {
   processed_at: string | null;
   obsidian_path: string | null;
   thumbnail: string | null;
+  extraction_status: string | null;
   status: string;
   error_message: string | null;
   created_at: string;
@@ -204,6 +205,8 @@ export function getStats(): {
   completed: number;
   failed: number;
   skipped: number;
+  contentRemoved: number;
+  paywall: number;
   bySource: { source: string; count: number }[];
   byCategory: { category: string; count: number }[];
 } {
@@ -214,10 +217,12 @@ export function getStats(): {
   const completed = (db.prepare("SELECT COUNT(*) as count FROM bookmarks WHERE status = 'completed'").get() as { count: number }).count;
   const failed = (db.prepare("SELECT COUNT(*) as count FROM bookmarks WHERE status = 'failed'").get() as { count: number }).count;
   const skipped = (db.prepare("SELECT COUNT(*) as count FROM bookmarks WHERE status = 'skipped'").get() as { count: number }).count;
+  const contentRemoved = (db.prepare("SELECT COUNT(*) as count FROM bookmarks WHERE status = 'content_removed'").get() as { count: number }).count;
+  const paywall = (db.prepare("SELECT COUNT(*) as count FROM bookmarks WHERE status = 'paywall'").get() as { count: number }).count;
   const bySource = db.prepare('SELECT source, COUNT(*) as count FROM bookmarks GROUP BY source ORDER BY count DESC').all() as { source: string; count: number }[];
   const byCategory = db.prepare("SELECT category, COUNT(*) as count FROM bookmarks WHERE category IS NOT NULL GROUP BY category ORDER BY count DESC").all() as { category: string; count: number }[];
 
-  return { total, pending, processing, completed, failed, skipped, bySource, byCategory };
+  return { total, pending, processing, completed, failed, skipped, contentRemoved, paywall, bySource, byCategory };
 }
 
 export function searchBookmarks(query: string, limit: number = 20): BookmarkRow[] {
@@ -371,4 +376,163 @@ export function getQueueStats(): { total: number; ready: number; retrying: numbe
   const ready = (db.prepare("SELECT COUNT(*) as count FROM processing_queue WHERE next_attempt_at <= datetime('now')").get() as { count: number }).count;
   const retrying = (db.prepare('SELECT COUNT(*) as count FROM processing_queue WHERE attempts > 0').get() as { count: number }).count;
   return { total, ready, retrying };
+}
+
+// --- Extraction status & attempts ---
+
+export function markContentRemoved(bookmarkId: number): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE bookmarks SET status = 'content_removed', extraction_status = 'content_removed', updated_at = datetime('now')
+    WHERE id = ?
+  `).run(bookmarkId);
+  db.prepare('DELETE FROM processing_queue WHERE bookmark_id = ?').run(bookmarkId);
+}
+
+export function requeueWithDelay(bookmarkId: number, delaySec: number): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE bookmarks SET status = 'pending', extraction_status = 'rate_limited', updated_at = datetime('now')
+    WHERE id = ?
+  `).run(bookmarkId);
+  db.prepare(`
+    UPDATE processing_queue
+    SET next_attempt_at = datetime('now', '+' || ? || ' seconds')
+    WHERE bookmark_id = ?
+  `).run(delaySec, bookmarkId);
+}
+
+export function updateExtractionStatus(bookmarkId: number, extractionStatus: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE bookmarks SET extraction_status = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(extractionStatus, bookmarkId);
+}
+
+export interface InsertExtractionAttemptParams {
+  bookmarkId: number;
+  status: string;
+  handler?: string;
+  method?: string;
+  textLength?: number;
+  durationMs?: number;
+  errorMessage?: string;
+}
+
+export function insertExtractionAttempt(params: InsertExtractionAttemptParams): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO extraction_attempts (bookmark_id, status, handler, method, text_length, duration_ms, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    params.bookmarkId,
+    params.status,
+    params.handler ?? null,
+    params.method ?? null,
+    params.textLength ?? 0,
+    params.durationMs ?? null,
+    params.errorMessage ?? null,
+  );
+}
+
+export function getExtractionAttempts(bookmarkId: number): {
+  id: number;
+  attempted_at: string;
+  status: string;
+  handler: string | null;
+  method: string | null;
+  text_length: number;
+  duration_ms: number | null;
+  error_message: string | null;
+}[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT id, attempted_at, status, handler, method, text_length, duration_ms, error_message
+    FROM extraction_attempts
+    WHERE bookmark_id = ?
+    ORDER BY attempted_at DESC
+  `).all(bookmarkId) as {
+    id: number;
+    attempted_at: string;
+    status: string;
+    handler: string | null;
+    method: string | null;
+    text_length: number;
+    duration_ms: number | null;
+    error_message: string | null;
+  }[];
+}
+
+// --- Media attachments ---
+
+export interface MediaAttachmentRow {
+  id: number;
+  bookmark_id: number;
+  type: string;
+  source_url: string;
+  local_path: string | null;
+  mime_type: string | null;
+  alt_text: string | null;
+  ocr_text: string | null;
+  transcription: string | null;
+  file_size: number | null;
+  created_at: string;
+}
+
+export function insertMediaAttachment(bookmarkId: number, attachment: {
+  type: string;
+  sourceUrl: string;
+  localPath?: string;
+  mimeType?: string;
+  altText?: string;
+  fileSize?: number;
+}): number {
+  const db = getDb();
+  const result = db.prepare(`
+    INSERT INTO media_attachments (bookmark_id, type, source_url, local_path, mime_type, alt_text, file_size)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    bookmarkId,
+    attachment.type,
+    attachment.sourceUrl,
+    attachment.localPath ?? null,
+    attachment.mimeType ?? null,
+    attachment.altText ?? null,
+    attachment.fileSize ?? null,
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export function getMediaAttachments(bookmarkId: number): MediaAttachmentRow[] {
+  const db = getDb();
+  return db.prepare(
+    'SELECT * FROM media_attachments WHERE bookmark_id = ? ORDER BY id'
+  ).all(bookmarkId) as MediaAttachmentRow[];
+}
+
+export function updateMediaAttachment(id: number, updates: {
+  localPath?: string;
+  mimeType?: string;
+  ocrText?: string;
+  transcription?: string;
+  fileSize?: number;
+}): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE media_attachments SET
+      local_path = COALESCE(?, local_path),
+      mime_type = COALESCE(?, mime_type),
+      ocr_text = COALESCE(?, ocr_text),
+      transcription = COALESCE(?, transcription),
+      file_size = COALESCE(?, file_size)
+    WHERE id = ?
+  `).run(
+    updates.localPath ?? null,
+    updates.mimeType ?? null,
+    updates.ocrText ?? null,
+    updates.transcription ?? null,
+    updates.fileSize ?? null,
+    id,
+  );
 }

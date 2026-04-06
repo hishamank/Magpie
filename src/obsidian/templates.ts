@@ -1,4 +1,4 @@
-import type { BookmarkRow } from '../db/queries.js';
+import type { BookmarkRow, MediaAttachmentRow } from '../db/queries.js';
 import type { EnrichmentResult } from '../processor/enricher.js';
 
 export function slugify(text: string): string {
@@ -52,6 +52,7 @@ export interface NoteContext {
     relation_score: number;
   }[];
   enrichment?: EnrichmentResult;
+  media?: MediaAttachmentRow[];
 }
 
 export function buildNoteContent(ctx: NoteContext): string {
@@ -106,12 +107,46 @@ export function buildNoteContent(ctx: NoteContext): string {
     lines.push('');
   }
 
-  // Key content (full extracted text)
-  if (bookmark.extracted_text) {
+  // Key content — prefer markdown (preserves structure) over plain text
+  const keyContent = bookmark.extracted_text;
+  if (keyContent) {
     lines.push('## Key Content');
     lines.push('');
-    lines.push(bookmark.extracted_text);
+    lines.push(keyContent);
     lines.push('');
+  }
+
+  // Media section — local downloads with OCR/transcription
+  const mediaItems = ctx.media || [];
+  const mediaWithFiles = mediaItems.filter(m => m.local_path);
+  if (mediaWithFiles.length > 0) {
+    const videos = mediaWithFiles.filter(m => m.type === 'video' || m.type === 'audio');
+    const imagesWithOcr = mediaWithFiles.filter(m => m.type === 'image' && m.ocr_text);
+
+    if (videos.length > 0 || imagesWithOcr.length > 0) {
+      lines.push('## Media');
+      lines.push('');
+
+      for (const v of videos) {
+        lines.push(`- **${v.type === 'video' ? 'Video' : 'Audio'}:** \`${v.local_path}\``);
+        if (v.transcription) {
+          lines.push('');
+          lines.push('  <details><summary>Transcription</summary>');
+          lines.push('');
+          lines.push('  ' + v.transcription.replace(/\n/g, '\n  '));
+          lines.push('');
+          lines.push('  </details>');
+        }
+      }
+
+      for (const img of imagesWithOcr) {
+        lines.push(`- **Image OCR** (\`${img.local_path}\`):`);
+        lines.push('');
+        lines.push('  > ' + (img.ocr_text || '').replace(/\n/g, '\n  > '));
+      }
+
+      lines.push('');
+    }
   }
 
   // Related bookmarks — only include those with existing vault notes

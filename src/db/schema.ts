@@ -101,11 +101,48 @@ export function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_processing_queue_next ON processing_queue(next_attempt_at);
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS extraction_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bookmark_id INTEGER NOT NULL,
+      attempted_at TEXT NOT NULL DEFAULT (datetime('now')),
+      status TEXT NOT NULL,
+      handler TEXT,
+      method TEXT,
+      text_length INTEGER DEFAULT 0,
+      duration_ms INTEGER,
+      error_message TEXT,
+      FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_extraction_attempts_bookmark ON extraction_attempts(bookmark_id);
+
+    CREATE TABLE IF NOT EXISTS media_attachments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bookmark_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      local_path TEXT,
+      mime_type TEXT,
+      alt_text TEXT,
+      ocr_text TEXT,
+      transcription TEXT,
+      file_size INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_media_bookmark ON media_attachments(bookmark_id);
+  `);
+
   // Migrations — safe to re-run
   const cols = db.prepare("PRAGMA table_info(bookmarks)").all() as { name: string }[];
   const colNames = new Set(cols.map(c => c.name));
   if (!colNames.has('thumbnail')) {
     db.exec("ALTER TABLE bookmarks ADD COLUMN thumbnail TEXT");
+  }
+  if (!colNames.has('extraction_status')) {
+    db.exec("ALTER TABLE bookmarks ADD COLUMN extraction_status TEXT");
   }
 
   logger.info('Database schema initialized');
