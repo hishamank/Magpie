@@ -2,6 +2,7 @@ import { collectGitHubStars } from './github.js';
 import { collectRaindropBookmarks } from './raindrop.js';
 import { collectYouTubeBookmarks } from './youtube.js';
 import { collectTwitterBookmarks } from './twitter.js';
+import { collectRedditSaved } from './reddit.js';
 import { ingestBookmark } from '../processor/pipeline.js';
 import { getExistingSourceIds, updateCollectorState, getCollectorState } from '../db/queries.js';
 import { getLogger } from '../utils/logger.js';
@@ -15,6 +16,7 @@ const collectors: Record<string, CollectorFn> = {
   raindrop: collectRaindropBookmarks,
   youtube: collectYouTubeBookmarks,
   twitter: collectTwitterBookmarks,
+  reddit: collectRedditSaved,
 };
 
 export async function runCollector(

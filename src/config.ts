@@ -6,6 +6,23 @@ function resolveFromRoot(p: string): string {
   return path.resolve(process.cwd(), p);
 }
 
+function parseRedditAccounts(): Array<{ clientId: string; clientSecret: string; username: string; password: string }> {
+  const json = process.env.REDDIT_ACCOUNTS;
+  if (json) {
+    try { return JSON.parse(json); } catch { /* fall through to single-account */ }
+  }
+
+  // Single-account fallback
+  const clientId = process.env.REDDIT_CLIENT_ID || '';
+  const clientSecret = process.env.REDDIT_CLIENT_SECRET || '';
+  const username = process.env.REDDIT_USERNAME || '';
+  const password = process.env.REDDIT_PASSWORD || '';
+  if (clientId && clientSecret && username && password) {
+    return [{ clientId, clientSecret, username, password }];
+  }
+  return [];
+}
+
 export const config = {
   db: {
     path: resolveFromRoot(process.env.DB_PATH || './data/bookmark-kb.db'),
@@ -30,6 +47,9 @@ export const config = {
   },
   raindrop: {
     token: process.env.RAINDROP_TOKEN || '',
+  },
+  reddit: {
+    accounts: parseRedditAccounts(),
   },
   discord: {
     botToken: process.env.DISCORD_BOT_TOKEN || '',

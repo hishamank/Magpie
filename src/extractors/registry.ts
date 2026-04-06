@@ -5,6 +5,7 @@ import { extractTwitter } from './twitter.js';
 import { extractMedium } from './medium.js';
 import { extractGitHub } from './github.js';
 import { extractPdf } from './pdf.js';
+import { extractReddit } from './reddit.js';
 import { logExtraction } from './extraction-log.js';
 import { getDb } from '../db/connection.js';
 import { getLogger } from '../utils/logger.js';
@@ -22,6 +23,7 @@ function register(domains: string[], handler: Handler, name: string): void {
 register(['youtube.com', 'youtu.be'], extractYouTube, 'youtube');
 register(['twitter.com', 'x.com'], extractTwitter, 'twitter');
 register(['github.com'], extractGitHub, 'github');
+register(['reddit.com', 'old.reddit.com', 'np.reddit.com'], extractReddit, 'reddit');
 register([
   'medium.com',
   'towardsdatascience.com',
