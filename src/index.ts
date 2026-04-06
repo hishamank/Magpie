@@ -98,6 +98,10 @@ program
       }
     }
 
+    // Close any Playwright browsers that may still be open
+    const { closeBrowser } = await import('./extractors/registry.js');
+    await closeBrowser().catch(() => {});
+
     closeDb();
     console.log('Processing complete.');
   });

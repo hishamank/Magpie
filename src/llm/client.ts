@@ -11,8 +11,11 @@ export async function chatCompletion(
 
   logger.debug('Sending LLM request');
 
+  // Strip lone surrogates that crash llama.cpp's JSON parser
+  const safePrompt = prompt.replace(/[\uD800-\uDFFF]/g, '');
+
   const body: Record<string, unknown> = {
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: safePrompt }],
     temperature: options?.temperature ?? 0.3,
     stream: false,
   };

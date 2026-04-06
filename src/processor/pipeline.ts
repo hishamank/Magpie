@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { extractContent } from '../extractors/registry.js';
+import { extractContent, closeBrowser } from '../extractors/registry.js';
 import { classifyContent } from './classifier.js';
 import { archiveContent } from './archiver.js';
 import { processKeywords, updateKeywordLinks, computeRelatedBookmarks } from './keywords.js';
@@ -64,7 +64,11 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     const content = await Promise.race([
       extractContent(input.url, input.sourceMetadata),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Extraction timed out after ${EXTRACT_TIMEOUT / 1000}s`)), EXTRACT_TIMEOUT),
+        setTimeout(async () => {
+          // Force-close any Playwright browsers so the process can exit
+          await closeBrowser().catch(() => {});
+          reject(new Error(`Extraction timed out after ${EXTRACT_TIMEOUT / 1000}s`));
+        }, EXTRACT_TIMEOUT),
       ),
     ]);
 

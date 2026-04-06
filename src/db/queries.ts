@@ -145,7 +145,7 @@ export function getPendingBookmarks(limit: number = 10): BookmarkRow[] {
     WHERE b.status IN ('pending', 'failed')
       AND q.attempts < q.max_attempts
       AND q.next_attempt_at <= datetime('now')
-    ORDER BY q.next_attempt_at ASC
+    ORDER BY RANDOM()
     LIMIT ?
   `).all(limit) as BookmarkRow[];
 }
