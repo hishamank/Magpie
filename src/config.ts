@@ -23,6 +23,37 @@ function parseRedditAccounts(): Array<{ clientId: string; clientSecret: string; 
   return [];
 }
 
+interface ProviderEnvConfig {
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  model?: string;
+}
+
+const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; envKey: string; envModel: string }> = {
+  local:      { baseUrl: process.env.LLM_SERVER_URL || 'http://localhost:8080', envKey: '', envModel: '' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1', envKey: 'OPENROUTER_API_KEY', envModel: 'OPENROUTER_MODEL' },
+  groq:       { baseUrl: 'https://api.groq.com/openai/v1', envKey: 'GROQ_API_KEY', envModel: 'GROQ_MODEL' },
+  nvidia:     { baseUrl: 'https://integrate.api.nvidia.com/v1', envKey: 'NVIDIA_API_KEY', envModel: 'NVIDIA_MODEL' },
+  gemini:     { baseUrl: '', envKey: '', envModel: 'GEMINI_MODEL' }, // uses gemini-cli subprocess, no API key needed
+};
+
+function parseProviderChain(): ProviderEnvConfig[] {
+  const raw = process.env.LLM_STEP2_PROVIDERS || 'local';
+  return raw.split(',').map(name => name.trim()).filter(Boolean).map(name => {
+    const defaults = PROVIDER_DEFAULTS[name];
+    if (!defaults) {
+      return { name, baseUrl: process.env.LLM_SERVER_URL || 'http://localhost:8080' };
+    }
+    return {
+      name,
+      baseUrl: defaults.baseUrl,
+      apiKey: defaults.envKey ? process.env[defaults.envKey] : undefined,
+      model: defaults.envModel ? process.env[defaults.envModel] : undefined,
+    };
+  });
+}
+
 export const config = {
   db: {
     path: resolveFromRoot(process.env.DB_PATH || './data/bookmark-kb.db'),
@@ -35,6 +66,7 @@ export const config = {
   },
   llm: {
     url: process.env.LLM_SERVER_URL || 'http://localhost:8080',
+    step2Providers: parseProviderChain(),
   },
   twitter: {
     cookiesPath: resolveFromRoot(process.env.TWITTER_COOKIES_PATH || './cookies/twitter-cookies.json'),

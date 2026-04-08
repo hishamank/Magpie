@@ -144,6 +144,12 @@ export function initSchema(): void {
   if (!colNames.has('extraction_status')) {
     db.exec("ALTER TABLE bookmarks ADD COLUMN extraction_status TEXT");
   }
+  if (!colNames.has('content_type')) {
+    db.exec("ALTER TABLE bookmarks ADD COLUMN content_type TEXT");
+  }
+  if (!colNames.has('type_metadata')) {
+    db.exec("ALTER TABLE bookmarks ADD COLUMN type_metadata TEXT");
+  }
 
   logger.info('Database schema initialized');
 }

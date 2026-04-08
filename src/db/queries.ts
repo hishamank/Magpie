@@ -23,6 +23,8 @@ export interface BookmarkRow {
   obsidian_path: string | null;
   thumbnail: string | null;
   extraction_status: string | null;
+  content_type: string | null;
+  type_metadata: string | null;
   status: string;
   error_message: string | null;
   created_at: string;
@@ -85,6 +87,8 @@ export interface UpdateBookmarkFullParams {
   actionability?: string;
   qualitySignal?: string;
   thumbnail?: string;
+  contentType?: string;
+  typeMetadata?: string;
   processedAt?: string;
   status?: string;
 }
@@ -104,6 +108,8 @@ export function updateBookmarkFull(id: number, params: UpdateBookmarkFullParams)
       actionability = COALESCE(?, actionability),
       quality_signal = COALESCE(?, quality_signal),
       thumbnail = COALESCE(?, thumbnail),
+      content_type = COALESCE(?, content_type),
+      type_metadata = COALESCE(?, type_metadata),
       processed_at = COALESCE(?, processed_at),
       status = COALESCE(?, status),
       updated_at = datetime('now')
@@ -120,6 +126,8 @@ export function updateBookmarkFull(id: number, params: UpdateBookmarkFullParams)
     params.actionability ?? null,
     params.qualitySignal ?? null,
     params.thumbnail ?? null,
+    params.contentType ?? null,
+    params.typeMetadata ?? null,
     params.processedAt ?? null,
     params.status ?? null,
     id,

@@ -13,24 +13,33 @@ export function slugify(text: string): string {
 
 export function getCategoryFolder(category: string | null): string {
   const map: Record<string, string> = {
-    'tool': 'tools',
-    'article': 'articles',
+    // New 14 types
     'guide': 'guides',
+    'article': 'articles',
+    'news': 'news',
     'paper': 'papers',
-    'tutorial': 'guides',
-    'video-essay': 'videos',
-    'repo': 'repos',
-    'tweet-thread': 'tweets',
+    'reference': 'reference',
+    'tool': 'tools',
+    'list': 'lists',
+    'social-post': 'social',
+    'media': 'media',
     'recipe': 'recipes',
     'book': 'books',
-    'movie': 'movies',
-    'trading': 'trading',
+    'location': 'locations',
+    'course': 'courses',
+    'other': 'other',
+    // Legacy mappings (for existing bookmarks)
+    'tutorial': 'guides',
+    'video-essay': 'articles',
+    'repo': 'tools',
+    'tweet-thread': 'social',
+    'movie': 'media',
+    'trading': 'articles',
     'tip': 'articles',
-    'news': 'articles',
     'opinion': 'articles',
-    'music': 'entertainment',
-    'meme': 'entertainment',
-    'entertainment': 'entertainment',
+    'music': 'media',
+    'meme': 'other',
+    'entertainment': 'media',
   };
   return map[category || ''] || 'articles';
 }
@@ -67,6 +76,7 @@ export function buildNoteContent(ctx: NoteContext): string {
   lines.push(`title: "${(bookmark.title || 'Untitled').replace(/"/g, '\\"')}"`);
   lines.push(`url: ${bookmark.url}`);
   lines.push(`source: ${bookmark.source}`);
+  if (bookmark.content_type) lines.push(`type: ${bookmark.content_type}`);
   lines.push(`category: ${bookmark.category || 'other'}`);
 
   if (subcategories.length > 0) {
@@ -105,6 +115,22 @@ export function buildNoteContent(ctx: NoteContext): string {
     lines.push('');
     lines.push(bookmark.summary);
     lines.push('');
+  }
+
+  // Type-specific details
+  if (bookmark.type_metadata) {
+    try {
+      const meta = JSON.parse(bookmark.type_metadata) as Record<string, unknown>;
+      const detailLines = renderTypeMetadata(bookmark.content_type, meta);
+      if (detailLines.length > 0) {
+        lines.push('## Details');
+        lines.push('');
+        lines.push(...detailLines);
+        lines.push('');
+      }
+    } catch {
+      // Invalid JSON — skip
+    }
   }
 
   // Key content — prefer markdown (preserves structure) over plain text
@@ -195,4 +221,103 @@ export function buildNoteContent(ctx: NoteContext): string {
   lines.push('');
 
   return lines.join('\n');
+}
+
+/**
+ * Render type-specific metadata as markdown bullet points.
+ * Returns empty array if no meaningful metadata exists.
+ */
+function renderTypeMetadata(type: string | null, meta: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+
+  function addField(label: string, value: unknown): void {
+    if (value === null || value === undefined || value === '') return;
+    if (Array.isArray(value)) {
+      if (value.length === 0) return;
+      lines.push(`- **${label}:** ${value.join(', ')}`);
+    } else {
+      lines.push(`- **${label}:** ${value}`);
+    }
+  }
+
+  switch (type) {
+    case 'guide':
+      addField('Difficulty', meta.difficulty);
+      addField('Prerequisites', meta.prerequisites);
+      addField('Steps', meta.steps);
+      addField('Estimated time', meta.estimatedTime);
+      break;
+    case 'article':
+      addField('Thesis', meta.thesis);
+      addField('Perspective', meta.perspective);
+      addField('Depth', meta.depth);
+      break;
+    case 'news':
+      addField('Event', meta.event);
+      addField('Date', meta.date);
+      addField('Entities', meta.entities);
+      addField('Impact', meta.impact);
+      break;
+    case 'paper':
+      addField('Authors', meta.authors);
+      addField('Methodology', meta.methodology);
+      addField('Findings', meta.findings);
+      break;
+    case 'reference':
+      addField('Scope', meta.scope);
+      addField('Format', meta.format);
+      break;
+    case 'tool':
+      addField('Solves', meta.solves);
+      addField('Language', meta.language);
+      addField('Platform', meta.platform);
+      addField('License', meta.license);
+      addField('Alternatives', meta.alternatives);
+      break;
+    case 'list':
+      addField('Items', meta.itemCount);
+      addField('List type', meta.listType);
+      addField('Category', meta.itemCategory);
+      break;
+    case 'social-post':
+      addField('Author', meta.author);
+      addField('Platform', meta.platform);
+      addField('Engagement', meta.engagement);
+      addField('Thread length', meta.threadLength);
+      break;
+    case 'media':
+      addField('Type', meta.mediaType);
+      addField('Duration', meta.duration);
+      addField('Creator', meta.creator);
+      addField('Series', meta.series);
+      break;
+    case 'recipe':
+      addField('Cuisine', meta.cuisine);
+      addField('Servings', meta.servings);
+      addField('Prep time', meta.prepTime);
+      addField('Cook time', meta.cookTime);
+      addField('Dietary', meta.dietaryTags);
+      break;
+    case 'book':
+      addField('Author', meta.bookAuthor);
+      addField('Genre', meta.genre);
+      addField('Pages', meta.pages);
+      addField('Themes', meta.themes);
+      break;
+    case 'location':
+      addField('Type', meta.locationType);
+      addField('Address', meta.address);
+      addField('Activities', meta.activities);
+      addField('Best season', meta.season);
+      break;
+    case 'course':
+      addField('Instructor', meta.instructor);
+      addField('Duration', meta.duration);
+      addField('Level', meta.level);
+      addField('Platform', meta.platform);
+      addField('Topics', meta.topics);
+      break;
+  }
+
+  return lines;
 }

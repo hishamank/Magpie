@@ -1,4 +1,7 @@
 import { config } from '../config.js';
+import { OpenAICompatibleProvider, GeminiCLIProvider } from './providers.js';
+import type { LLMProvider } from './providers.js';
+import { ProviderChain } from './provider-chain.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('llm');
@@ -7,50 +10,62 @@ type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } };
 
+// Lazily initialized local provider
+let localProvider: OpenAICompatibleProvider | null = null;
+
+function getLocalProvider(): OpenAICompatibleProvider {
+  if (!localProvider) {
+    localProvider = new OpenAICompatibleProvider({
+      name: 'local',
+      baseUrl: config.llm.url + '/v1',
+    });
+  }
+  return localProvider;
+}
+
+// Lazily initialized step 2 provider chain
+let step2Chain: ProviderChain | null = null;
+
+/**
+ * Get the provider chain for step 2 classification.
+ * Uses configured providers with fallback (default: local only).
+ */
+export function getStep2Chain(): ProviderChain {
+  if (!step2Chain) {
+    const providers: LLMProvider[] = config.llm.step2Providers.map(cfg => {
+      // Gemini uses CLI subprocess instead of HTTP API
+      if (cfg.name === 'gemini') {
+        return new GeminiCLIProvider(cfg.model);
+      }
+      return new OpenAICompatibleProvider({
+        name: cfg.name,
+        baseUrl: cfg.baseUrl.includes('/v1') ? cfg.baseUrl : cfg.baseUrl + '/v1',
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+      });
+    });
+    step2Chain = new ProviderChain(providers);
+  }
+  return step2Chain;
+}
+
+/**
+ * Chat completion using the local LLM server.
+ * Used for step 1 type detection, enrichment, and cleanup.
+ */
 export async function chatCompletion(
   prompt: string,
   options?: { temperature?: number; format?: 'json' }
 ): Promise<string> {
-  const url = `${config.llm.url}/v1/chat/completions`;
-
-  logger.debug('Sending LLM request');
-
-  // Strip lone surrogates that crash llama.cpp's JSON parser
-  const safePrompt = prompt.replace(/[\uD800-\uDFFF]/g, '');
-
-  const body: Record<string, unknown> = {
-    messages: [{ role: 'user', content: safePrompt }],
-    temperature: options?.temperature ?? 0.3,
-    stream: false,
-  };
-
-  if (options?.format === 'json') {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
+  return getLocalProvider().complete(prompt, {
+    temperature: options?.temperature,
+    format: options?.format,
   });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`llama.cpp API error (${response.status}): ${text}`);
-  }
-
-  const data = await response.json() as {
-    choices: { message: { content: string } }[];
-  };
-
-  logger.debug('LLM response received');
-  return data.choices[0].message.content;
 }
 
 /**
- * Vision-capable chat completion. Sends an image alongside a text prompt
- * using the OpenAI-compatible multimodal content format.
+ * Vision-capable chat completion using the local LLM server.
+ * Sends an image alongside a text prompt using multimodal content format.
  */
 export async function visionCompletion(
   prompt: string,

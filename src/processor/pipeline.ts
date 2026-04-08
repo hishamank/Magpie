@@ -176,6 +176,8 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
       actionability: classification.actionability,
       qualitySignal: classification.qualitySignal,
       thumbnail,
+      contentType: classification.type,
+      typeMetadata: JSON.stringify(classification.typeMetadata),
       processedAt: new Date().toISOString(),
       status: 'completed',
     });
