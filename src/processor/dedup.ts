@@ -36,20 +36,19 @@ export function checkContentDuplicate(contentHash: string): DedupResult {
     return { isDuplicate: true, existingBookmark: existing, reason: 'Identical content hash' };
   }
 
-  // Check simhash similarity against recent bookmarks
+  // Check simhash similarity against recent processed bookmarks
   const db = getDb();
   const recentBookmarks = db.prepare(`
-    SELECT id, content_hash FROM bookmarks
-    WHERE content_hash IS NOT NULL AND status = 'completed'
-    ORDER BY id DESC LIMIT 500
+    SELECT pb.bookmark_id as id, pb.content_hash FROM processed_bookmarks pb
+    WHERE pb.content_hash IS NOT NULL AND pb.status = 'completed'
+    ORDER BY pb.bookmark_id DESC LIMIT 500
   `).all() as { id: number; content_hash: string }[];
 
   for (const row of recentBookmarks) {
     const similarity = simhashSimilarity(contentHash, row.content_hash);
     if (similarity >= 0.9) {
       logger.debug({ contentHash, matchId: row.id, similarity }, 'Similar content found via simhash');
-      const bookmark = db.prepare('SELECT * FROM bookmarks WHERE id = ?').get(row.id) as BookmarkRow;
-      return { isDuplicate: true, existingBookmark: bookmark, reason: `Similar content (${(similarity * 100).toFixed(0)}% match)` };
+      return { isDuplicate: true, reason: `Similar content (${(similarity * 100).toFixed(0)}% match)` };
     }
   }
 

@@ -47,9 +47,12 @@ function standardOutputFormat(typeMetadataSpec: string): string {
 }
 
 Keyword guidelines:
+- Generate 8-12 keywords with a MIX of specificity levels:
+  - 2-3 BROAD domain terms: "web-development", "machine-learning", "personal-finance", "hip-hop-music"
+  - 3-4 MEDIUM topic terms: "react-hooks", "neural-networks", "index-funds", "rap-lyrics"
+  - 3-5 SPECIFIC terms unique to this content: "react-server-components", "transformer-architecture"
 - Use hyphenated compound terms: "react-server-components" not just "react"
-- Include specific technologies, techniques, concepts mentioned
-- Include the problem domain and field
+- IMPORTANT: Broad terms enable linking between related bookmarks. A React tutorial and a Next.js guide should share "web-development" and "react-ecosystem"
 - Avoid generic words like "interesting", "useful", "technology"`;
 }
 

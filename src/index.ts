@@ -49,7 +49,6 @@ program
       urlHash,
       title: opts.title,
       source: (opts.source as 'manual') ?? 'manual',
-      status: 'pending',
     });
     addToProcessingQueue(id);
     console.log(`Added bookmark (id: ${id}): ${normalized}`);
@@ -214,9 +213,15 @@ program
 
 program
   .command('reindex')
-  .description('Regenerate all Obsidian index files')
-  .action(() => {
+  .description('Regenerate all Obsidian index files and recompute bookmark relations')
+  .option('--relations', 'Also recompute bookmark relations')
+  .action(async (opts: { relations?: boolean }) => {
     initSchema();
+    if (opts.relations) {
+      const { recomputeAllRelations } = await import('./processor/keywords.js');
+      const result = await recomputeAllRelations();
+      console.log(`Relations recomputed: ${result.pairs} pairs`);
+    }
     updateAllIndexFiles();
     console.log('Index files regenerated.');
     closeDb();

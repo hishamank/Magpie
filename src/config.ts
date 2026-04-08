@@ -38,6 +38,24 @@ const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; envKey: string; envMo
   gemini:     { baseUrl: '', envKey: '', envModel: 'GEMINI_MODEL' }, // uses gemini-cli subprocess, no API key needed
 };
 
+// Vision-capable models per provider
+const VISION_DEFAULTS: Record<string, { baseUrl: string; envKey: string; model: string }> = {
+  groq:       { baseUrl: 'https://api.groq.com/openai/v1', envKey: 'GROQ_API_KEY', model: 'llama-3.2-11b-vision-preview' },
+  nvidia:     { baseUrl: 'https://integrate.api.nvidia.com/v1', envKey: 'NVIDIA_API_KEY', model: 'meta/llama-3.2-90b-vision-instruct' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1', envKey: 'OPENROUTER_API_KEY', model: 'meta-llama/llama-3.2-11b-vision-instruct:free' },
+};
+
+function parseVisionProviders(): ProviderEnvConfig[] {
+  const raw = process.env.LLM_VISION_PROVIDERS || 'groq,openrouter,nvidia';
+  return raw.split(',').map(name => name.trim()).filter(Boolean).map(name => {
+    const defaults = VISION_DEFAULTS[name];
+    if (!defaults) return null;
+    const apiKey = defaults.envKey ? process.env[defaults.envKey] : undefined;
+    if (!apiKey) return null; // skip providers without keys
+    return { name, baseUrl: defaults.baseUrl, apiKey, model: defaults.model };
+  }).filter(Boolean) as ProviderEnvConfig[];
+}
+
 function parseProviderChain(): ProviderEnvConfig[] {
   const raw = process.env.LLM_STEP2_PROVIDERS || 'local';
   return raw.split(',').map(name => name.trim()).filter(Boolean).map(name => {
@@ -67,6 +85,7 @@ export const config = {
   llm: {
     url: process.env.LLM_SERVER_URL || 'http://localhost:8080',
     step2Providers: parseProviderChain(),
+    visionProviders: parseVisionProviders(),
   },
   twitter: {
     cookiesPath: resolveFromRoot(process.env.TWITTER_COOKIES_PATH || './cookies/twitter-cookies.json'),

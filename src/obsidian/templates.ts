@@ -1,6 +1,26 @@
 import type { BookmarkRow, MediaAttachmentRow } from '../db/queries.js';
 import type { EnrichmentResult } from '../processor/enricher.js';
 
+/**
+ * Clean extracted content for display in Obsidian notes.
+ * Strips HTML artifacts, normalizes whitespace, removes boilerplate noise.
+ */
+function cleanContentForDisplay(text: string): string {
+  return text
+    // Remove raw HTML tags
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(div|span|p|section|nav|footer|header|aside|figure|figcaption)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    // Fix emoji shortcodes left as :name:
+    .replace(/:(\w+):/g, '')
+    // Remove [Music], [Applause] and similar transcription artifacts
+    .replace(/\[(?:Music|Applause|Laughter|Inaudible)\]/gi, '')
+    // Normalize excessive whitespace
+    .replace(/\n{4,}/g, '\n\n\n')
+    .replace(/[ \t]+$/gm, '')
+    .trim();
+}
+
 export function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -99,7 +119,6 @@ export function buildNoteContent(ctx: NoteContext): string {
   lines.push(`collected: ${(bookmark.collected_at || bookmark.created_at).slice(0, 10)}`);
   if (bookmark.processed_at) lines.push(`processed: ${bookmark.processed_at.slice(0, 10)}`);
   if (bookmark.thumbnail) lines.push(`thumbnail: "${bookmark.thumbnail}"`);
-  lines.push(`status: ${bookmark.actionability || 'reference'}`);
   lines.push('---');
   lines.push('');
 
@@ -109,8 +128,10 @@ export function buildNoteContent(ctx: NoteContext): string {
     lines.push('');
   }
 
-  // Summary
-  if (bookmark.summary) {
+  // Summary — skip fallback/placeholder text
+  const isFallbackSummary = bookmark.summary?.includes('Automatic classification failed')
+    || bookmark.summary?.includes('manual review recommended');
+  if (bookmark.summary && !isFallbackSummary) {
     lines.push('## Summary');
     lines.push('');
     lines.push(bookmark.summary);
@@ -133,12 +154,14 @@ export function buildNoteContent(ctx: NoteContext): string {
     }
   }
 
-  // Key content — prefer markdown (preserves structure) over plain text
-  const keyContent = bookmark.extracted_text;
-  if (keyContent) {
+  // Key content — formatted per type, cleaned for display
+  const rawContent = bookmark.extracted_text;
+  if (rawContent) {
+    const cleaned = cleanContentForDisplay(rawContent);
+    const formatted = formatContentByType(bookmark.content_type, cleaned, bookmark);
     lines.push('## Key Content');
     lines.push('');
-    lines.push(keyContent);
+    lines.push(formatted);
     lines.push('');
   }
 
@@ -221,6 +244,199 @@ export function buildNoteContent(ctx: NoteContext): string {
   lines.push('');
 
   return lines.join('\n');
+}
+
+/**
+ * Format extracted content based on content type.
+ * Each type gets appropriate markdown structure.
+ */
+function formatContentByType(type: string | null, content: string, bookmark: BookmarkRow): string {
+  switch (type) {
+    case 'recipe':
+      return formatRecipeContent(content);
+    case 'list':
+      return formatListContent(content);
+    case 'guide':
+      return formatGuideContent(content);
+    case 'media':
+      return formatMediaContent(content, bookmark);
+    case 'social-post':
+      return formatSocialContent(content, bookmark);
+    case 'tool':
+      return formatToolContent(content, bookmark);
+    default:
+      // Article, news, paper, reference, course, book, other — content is usually
+      // already well-structured markdown from extraction. Just add paragraph breaks
+      // to wall-of-text transcriptions.
+      return addStructureToWallOfText(content);
+  }
+}
+
+/**
+ * If content is a wall of text (no headings, no line breaks), add paragraph breaks
+ * at sentence boundaries approximately every 200 words.
+ */
+function addStructureToWallOfText(content: string): string {
+  // If content already has markdown structure (headings, lists, paragraphs), return as-is
+  const hasStructure = /^#{1,3}\s/m.test(content) || content.includes('\n\n') || /^[-*]\s/m.test(content);
+  if (hasStructure) return content;
+
+  // Split into sentences and group into paragraphs
+  const sentences = content.split(/(?<=[.!?])\s+/);
+  if (sentences.length < 5) return content;
+
+  const paragraphs: string[] = [];
+  let current: string[] = [];
+  let wordCount = 0;
+
+  for (const sentence of sentences) {
+    current.push(sentence);
+    wordCount += sentence.split(/\s+/).length;
+    if (wordCount >= 150) {
+      paragraphs.push(current.join(' '));
+      current = [];
+      wordCount = 0;
+    }
+  }
+  if (current.length > 0) {
+    paragraphs.push(current.join(' '));
+  }
+
+  return paragraphs.join('\n\n');
+}
+
+/**
+ * Format recipe content with clear ingredient/step structure.
+ */
+function formatRecipeContent(content: string): string {
+  // If already has recipe structure (ingredients header, numbered steps), return as-is
+  if (/ingredients/i.test(content) && (/\d+\.\s/m.test(content) || /^[-*]\s/m.test(content))) {
+    return content;
+  }
+
+  // Try to split into ingredients and instructions from raw text
+  const lines = content.split('\n').filter(l => l.trim());
+  const output: string[] = [];
+  let inIngredients = false;
+  let inSteps = false;
+
+  for (const line of lines) {
+    const lower = line.toLowerCase().trim();
+    if (/^(ingredients|what you.?ll need)/i.test(lower)) {
+      output.push('\n### Ingredients\n');
+      inIngredients = true;
+      inSteps = false;
+      continue;
+    }
+    if (/^(instructions|directions|steps|method|preparation|how to)/i.test(lower)) {
+      output.push('\n### Instructions\n');
+      inIngredients = false;
+      inSteps = true;
+      continue;
+    }
+
+    if (inIngredients) {
+      const cleaned = line.trim().replace(/^[-•*]\s*/, '');
+      if (cleaned) output.push(`- ${cleaned}`);
+    } else if (inSteps) {
+      const cleaned = line.trim().replace(/^\d+[.)]\s*/, '');
+      if (cleaned) output.push(`${cleaned}\n`);
+    } else {
+      output.push(line);
+    }
+  }
+
+  return output.length > 0 ? output.join('\n') : addStructureToWallOfText(content);
+}
+
+/**
+ * Format list content as proper bullet points.
+ */
+function formatListContent(content: string): string {
+  // If already has list structure, return as-is
+  if (/^[-*]\s/m.test(content) || /^\d+[.)]\s/m.test(content)) {
+    return content;
+  }
+
+  // Try to extract list items from the text
+  const lines = content.split('\n').filter(l => l.trim());
+  const output: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Lines that look like list items (start with number, dash, bullet, or short phrases)
+    if (/^\d+[.):]\s*/.test(trimmed)) {
+      output.push(`- ${trimmed.replace(/^\d+[.):]\s*/, '')}`);
+    } else if (/^[-•*]\s/.test(trimmed)) {
+      output.push(trimmed.replace(/^[-•*]\s/, '- '));
+    } else if (trimmed.length < 200 && !trimmed.endsWith('.')) {
+      // Short lines without periods are likely list items
+      output.push(`- ${trimmed}`);
+    } else {
+      output.push(trimmed);
+    }
+  }
+
+  return output.join('\n');
+}
+
+/**
+ * Format guide/tutorial content with section structure.
+ */
+function formatGuideContent(content: string): string {
+  // If already has heading structure, return as-is
+  if (/^#{1,3}\s/m.test(content)) return content;
+
+  // Try to detect numbered steps and convert to sections
+  const lines = content.split('\n');
+  const output: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Convert "Step N:" or "N." at the start of a paragraph to a heading
+    const stepMatch = trimmed.match(/^(?:step\s+)?(\d+)[.:)\s]+(.+)/i);
+    if (stepMatch && trimmed.length < 200) {
+      output.push(`\n### Step ${stepMatch[1]}: ${stepMatch[2]}\n`);
+    } else {
+      output.push(line);
+    }
+  }
+
+  const result = output.join('\n');
+  // If we didn't add any structure, fall back to paragraph splitting
+  return /^###\s/m.test(result) ? result : addStructureToWallOfText(content);
+}
+
+/**
+ * Format media content (music, video, podcast) with metadata focus.
+ */
+function formatMediaContent(content: string, bookmark: BookmarkRow): string {
+  // For music/songs — the transcription IS the content, just clean it up
+  // For videos — the transcript should be the focus, with metadata at top
+  const structured = addStructureToWallOfText(content);
+
+  // If content is very short (just a video description), return as-is
+  if (structured.length < 500) return structured;
+
+  return structured;
+}
+
+/**
+ * Format social media content (tweets, threads).
+ */
+function formatSocialContent(content: string, bookmark: BookmarkRow): string {
+  // Social content is usually already formatted (tweet text, thread structure)
+  // Just ensure it has proper markdown structure
+  return addStructureToWallOfText(content);
+}
+
+/**
+ * Format tool/repo content with README structure.
+ */
+function formatToolContent(content: string, bookmark: BookmarkRow): string {
+  // GitHub READMEs are already markdown — return as-is
+  if (/^#{1,3}\s/m.test(content)) return content;
+  return addStructureToWallOfText(content);
 }
 
 /**

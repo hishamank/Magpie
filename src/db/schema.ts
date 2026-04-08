@@ -11,27 +11,40 @@ export function initSchema(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       url TEXT NOT NULL,
       url_hash TEXT NOT NULL UNIQUE,
-      content_hash TEXT,
       title TEXT,
       source TEXT NOT NULL,
       source_id TEXT,
       media_type TEXT,
+      source_metadata TEXT,
+      collected_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS processed_bookmarks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bookmark_id INTEGER NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      extraction_status TEXT,
+      content_hash TEXT,
+      raw_content_path TEXT,
+      extracted_text TEXT,
+      title TEXT,
+      author TEXT,
       category TEXT,
+      content_type TEXT,
+      type_metadata TEXT,
       subcategories TEXT,
       summary TEXT,
       actionability TEXT,
       quality_signal TEXT,
-      raw_content_path TEXT,
-      extracted_text TEXT,
-      author TEXT,
-      source_metadata TEXT,
-      collected_at TEXT NOT NULL DEFAULT (datetime('now')),
-      processed_at TEXT,
+      thumbnail TEXT,
       obsidian_path TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
       error_message TEXT,
+      processed_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS keywords (
@@ -94,9 +107,11 @@ export function initSchema(): void {
 
     CREATE INDEX IF NOT EXISTS idx_bookmarks_url_hash ON bookmarks(url_hash);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_source ON bookmarks(source);
-    CREATE INDEX IF NOT EXISTS idx_bookmarks_category ON bookmarks(category);
-    CREATE INDEX IF NOT EXISTS idx_bookmarks_status ON bookmarks(status);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_collected_at ON bookmarks(collected_at);
+    CREATE INDEX IF NOT EXISTS idx_processed_bookmark_id ON processed_bookmarks(bookmark_id);
+    CREATE INDEX IF NOT EXISTS idx_processed_status ON processed_bookmarks(status);
+    CREATE INDEX IF NOT EXISTS idx_processed_category ON processed_bookmarks(category);
+    CREATE INDEX IF NOT EXISTS idx_processed_content_type ON processed_bookmarks(content_type);
     CREATE INDEX IF NOT EXISTS idx_keywords_keyword ON keywords(keyword);
     CREATE INDEX IF NOT EXISTS idx_processing_queue_next ON processing_queue(next_attempt_at);
   `);
@@ -135,20 +150,33 @@ export function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_media_bookmark ON media_attachments(bookmark_id);
   `);
 
-  // Migrations — safe to re-run
+  // Migration: if old-style bookmarks table has processing columns, migrate to new schema.
+  // This handles the transition from single-table to two-table design.
   const cols = db.prepare("PRAGMA table_info(bookmarks)").all() as { name: string }[];
   const colNames = new Set(cols.map(c => c.name));
-  if (!colNames.has('thumbnail')) {
-    db.exec("ALTER TABLE bookmarks ADD COLUMN thumbnail TEXT");
-  }
-  if (!colNames.has('extraction_status')) {
-    db.exec("ALTER TABLE bookmarks ADD COLUMN extraction_status TEXT");
-  }
-  if (!colNames.has('content_type')) {
-    db.exec("ALTER TABLE bookmarks ADD COLUMN content_type TEXT");
-  }
-  if (!colNames.has('type_metadata')) {
-    db.exec("ALTER TABLE bookmarks ADD COLUMN type_metadata TEXT");
+  if (colNames.has('status') && colNames.has('extracted_text')) {
+    // Old schema detected — migrate any processed data to processed_bookmarks
+    const hasProcessed = db.prepare(
+      "SELECT COUNT(*) as count FROM bookmarks WHERE status NOT IN ('pending') AND extracted_text IS NOT NULL"
+    ).get() as { count: number };
+    if (hasProcessed.count > 0) {
+      db.exec(`
+        INSERT OR IGNORE INTO processed_bookmarks (
+          bookmark_id, status, extraction_status, content_hash, raw_content_path,
+          extracted_text, title, author, category, content_type, type_metadata,
+          subcategories, summary, actionability, quality_signal, thumbnail,
+          obsidian_path, error_message, processed_at
+        )
+        SELECT
+          id, status, extraction_status, content_hash, raw_content_path,
+          extracted_text, title, author, category, content_type, type_metadata,
+          subcategories, summary, actionability, quality_signal, thumbnail,
+          obsidian_path, error_message, processed_at
+        FROM bookmarks
+        WHERE status NOT IN ('pending') AND extracted_text IS NOT NULL
+      `);
+      logger.info({ count: hasProcessed.count }, 'Migrated processed bookmarks to new table');
+    }
   }
 
   logger.info('Database schema initialized');

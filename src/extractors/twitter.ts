@@ -1,4 +1,5 @@
 import type { ExtractedContent, MediaAttachment } from './types.js';
+import { htmlToMarkdown, extractImageUrls } from './formatter.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('extractor:twitter');
@@ -82,6 +83,12 @@ interface FxStatusResponse {
  * Falls back to syndication API for single tweets if FxTwitter is down.
  */
 export async function extractTwitter(url: string, sourceMetadata?: Record<string, unknown>): Promise<ExtractedContent> {
+  // Check if this is an X Article (long-form blog post)
+  const articleId = url.match(/\/i\/article\/(\d+)/)?.[1];
+  if (articleId) {
+    return extractXArticle(url, articleId, sourceMetadata);
+  }
+
   logger.info({ url }, 'Extracting tweet/thread');
 
   const tweetId = url.match(/status\/(\d+)/)?.[1];
@@ -270,6 +277,127 @@ function buildContent(tweets: FxTweet[]): ExtractedContent {
       },
     },
   };
+}
+
+/**
+ * Extract an X Article (long-form blog post) via Playwright.
+ * These are rendered at x.com/i/article/{id} and require JavaScript.
+ */
+async function extractXArticle(url: string, articleId: string, sourceMetadata?: Record<string, unknown>): Promise<ExtractedContent> {
+  logger.info({ url, articleId }, 'Extracting X Article');
+
+  const articleMeta = sourceMetadata?.article as Record<string, unknown> | undefined;
+  const authorHandle = sourceMetadata?.authorHandle as string || '';
+  const tweetText = sourceMetadata?.tweetText as string || '';
+
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
+
+    // Load cookies for authenticated access
+    const fs = await import('node:fs');
+    const { config } = await import('../config.js');
+    if (fs.existsSync(config.twitter.cookiesPath)) {
+      const cookieData = JSON.parse(fs.readFileSync(config.twitter.cookiesPath, 'utf-8'));
+      const cookies = (Array.isArray(cookieData) ? cookieData : [])
+        .filter((c: Record<string, unknown>) =>
+          (c.domain as string)?.includes('twitter.com') || (c.domain as string)?.includes('x.com')
+        )
+        .map((c: Record<string, unknown>) => ({
+          name: c.name as string,
+          value: c.value as string,
+          domain: c.domain as string,
+          path: (c.path as string) || '/',
+          httpOnly: (c.httpOnly as boolean) ?? false,
+          secure: (c.secure as boolean) ?? true,
+          sameSite: 'None' as const,
+        }));
+      await context.addCookies(cookies);
+    }
+
+    const page = await context.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+
+    // Wait for article content to render
+    await page.waitForSelector('article, [data-testid="tweetText"], [role="article"]', { timeout: 15_000 }).catch(() => {});
+    // Extra wait for JS rendering
+    await page.waitForTimeout(3000);
+
+    // Extract the article content
+    const articleContent = await page.evaluate(() => {
+      // X articles render in a specific container
+      // Try multiple selectors that X uses for article content
+      const selectors = [
+        'article[data-testid="tweet"]',
+        '[data-testid="article"]',
+        'article',
+        '[role="article"]',
+        'main',
+      ];
+
+      let container: Element | null = null;
+      for (const sel of selectors) {
+        container = document.querySelector(sel);
+        if (container && container.textContent && container.textContent.length > 100) break;
+      }
+
+      if (!container) {
+        // Fallback: get the whole body
+        container = document.body;
+      }
+
+      return {
+        html: container.innerHTML,
+        text: container.textContent?.trim() || '',
+        title: document.title || '',
+      };
+    });
+
+    await context.close();
+
+    const title = articleMeta?.title as string || articleContent.title || `X Article by @${authorHandle}`;
+    const markdown = htmlToMarkdown(articleContent.html, url);
+    const images = extractImageUrls(articleContent.html, url)
+      .filter(img => !img.includes('emoji') && !img.includes('profile_images'));
+
+    // Build rich markdown with metadata
+    const header = [
+      `# ${title}`,
+      '',
+      `**Author:** @${authorHandle}`,
+      articleMeta?.previewText ? `**Preview:** ${articleMeta.previewText}` : '',
+      tweetText ? `**Tweet:** ${tweetText}` : '',
+      '',
+      '---',
+      '',
+    ].filter(Boolean).join('\n');
+
+    const media: MediaAttachment[] = images.map(img => ({
+      type: 'image' as const,
+      sourceUrl: img,
+    }));
+
+    return {
+      title,
+      text: articleContent.text,
+      markdown: header + markdown,
+      author: authorHandle,
+      images: images.length > 0 ? images : undefined,
+      media: media.length > 0 ? media : undefined,
+      metadata: {
+        articleId,
+        isXArticle: true,
+        authorHandle,
+        tweetText,
+      },
+    };
+  } finally {
+    await browser.close();
+  }
 }
 
 /**

@@ -9,9 +9,14 @@ export interface CompletionOptions {
   timeoutMs?: number;
 }
 
+type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface LLMProvider {
   name: string;
   complete(prompt: string, options?: CompletionOptions): Promise<string>;
+  visionComplete?(prompt: string, imageBase64: string, mimeType: string, options?: CompletionOptions): Promise<string>;
 }
 
 export interface ProviderConfig {
@@ -90,6 +95,56 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
 
     logger.debug({ provider: this.name }, 'LLM response received');
+    return data.choices[0].message.content;
+  }
+
+  async visionComplete(prompt: string, imageBase64: string, mimeType: string, options?: CompletionOptions): Promise<string> {
+    const url = `${this.baseUrl}/chat/completions`;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+
+    const content: ContentPart[] = [
+      { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+      { type: 'text', text: prompt },
+    ];
+
+    const body: Record<string, unknown> = {
+      messages: [{ role: 'user', content }],
+      temperature: options?.temperature ?? 0.2,
+      stream: false,
+    };
+
+    if (this.model) {
+      body.model = this.model;
+    }
+
+    const timeout = options?.timeoutMs ?? 120_000;
+    logger.debug({ provider: this.name, model: this.model }, 'Sending vision request');
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeout),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      const err = new Error(`${this.name} vision API error (${response.status}): ${text}`);
+      (err as unknown as Record<string, unknown>).statusCode = response.status;
+      throw err;
+    }
+
+    const data = await response.json() as {
+      choices: { message: { content: string } }[];
+    };
+
+    logger.debug({ provider: this.name }, 'Vision response received');
     return data.choices[0].message.content;
   }
 }

@@ -15,8 +15,8 @@ import { config } from '../config.js';
 import {
   getBookmarkByUrlHash,
   insertBookmark,
-  updateBookmarkFull,
-  updateBookmarkStatus,
+  upsertProcessedBookmark,
+  updateProcessingStatus,
   updateObsidianPath,
   incrementQueueAttempt,
   removeFromQueue,
@@ -62,7 +62,7 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
   logger.info({ url: input.url, bookmarkId }, 'Processing bookmark');
 
   incrementQueueAttempt(bookmarkId);
-  updateBookmarkStatus(bookmarkId, 'processing');
+  updateProcessingStatus(bookmarkId, 'processing');
 
   try {
     // Step 1: Extract content (with overall timeout to prevent hangs)
@@ -96,12 +96,12 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
 
       case 'paywall':
         logger.warn({ url: input.url, detail: result.statusDetail }, 'Paywall detected, bypass failed');
-        updateBookmarkStatus(bookmarkId, 'paywall', result.statusDetail);
+        updateProcessingStatus(bookmarkId, 'paywall', result.statusDetail);
         return;
 
       case 'error':
         logger.error({ url: input.url, detail: result.statusDetail }, 'Extraction failed');
-        updateBookmarkStatus(bookmarkId, 'failed', result.statusDetail);
+        updateProcessingStatus(bookmarkId, 'failed', result.statusDetail);
         return;
 
       case 'success':
@@ -164,7 +164,7 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     // Pick the best thumbnail: first image from extraction (og:image, twitter:image, or YouTube thumbnail)
     const thumbnail = content.images?.[0];
 
-    updateBookmarkFull(bookmarkId, {
+    upsertProcessedBookmark(bookmarkId, {
       title: finalTitle,
       contentHash,
       rawContentPath: rawPath,
@@ -204,7 +204,7 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
   } catch (err) {
     const message = (err as Error).message || '';
     logger.error({ url: input.url, err }, 'Failed to process bookmark');
-    updateBookmarkStatus(bookmarkId, 'failed', message);
+    updateProcessingStatus(bookmarkId, 'failed', message);
   }
 }
 
@@ -231,7 +231,6 @@ export async function ingestBookmark(input: BookmarkInput): Promise<number | nul
     mediaType: input.mediaType,
     sourceMetadata: input.sourceMetadata,
     collectedAt: input.collectedAt,
-    status: 'pending',
   });
 
   addToProcessingQueue(bookmarkId);

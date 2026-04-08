@@ -111,10 +111,16 @@ function generateTagIndex(): void {
 
   for (const { keyword, usage_count } of keywords.slice(0, 100)) {
     const bookmarks = db.prepare(`
-      SELECT b.* FROM bookmarks b
+      SELECT b.id, b.url, b.url_hash, b.source, b.source_id, b.media_type,
+        b.source_metadata, b.collected_at, b.created_at, b.updated_at,
+        COALESCE(pb.title, b.title) as title,
+        COALESCE(pb.status, 'pending') as status,
+        pb.category, pb.obsidian_path, pb.summary
+      FROM bookmarks b
+      LEFT JOIN processed_bookmarks pb ON b.id = pb.bookmark_id
       JOIN bookmark_keywords bk ON b.id = bk.bookmark_id
       JOIN keywords k ON k.id = bk.keyword_id
-      WHERE k.keyword = ? AND b.status = 'completed'
+      WHERE k.keyword = ? AND COALESCE(pb.status, 'pending') = 'completed'
       ORDER BY b.collected_at DESC
     `).all(keyword) as BookmarkRow[];
 
@@ -134,9 +140,14 @@ function generateTagIndex(): void {
 function generateRecentIndex(): void {
   const db = getDb();
   const recent = db.prepare(`
-    SELECT * FROM bookmarks
-    WHERE status = 'completed'
-    ORDER BY collected_at DESC
+    SELECT b.id, b.url, b.url_hash, b.source, b.source_id, b.media_type,
+      b.source_metadata, b.collected_at, b.created_at, b.updated_at,
+      COALESCE(pb.title, b.title) as title,
+      pb.category, pb.obsidian_path, pb.summary, pb.actionability, pb.quality_signal
+    FROM bookmarks b
+    JOIN processed_bookmarks pb ON b.id = pb.bookmark_id
+    WHERE pb.status = 'completed'
+    ORDER BY b.collected_at DESC
     LIMIT 50
   `).all() as BookmarkRow[];
 
@@ -157,18 +168,23 @@ function generateRecentIndex(): void {
 function generateToReadIndex(): void {
   const db = getDb();
   const toRead = db.prepare(`
-    SELECT * FROM bookmarks
-    WHERE status = 'completed'
-      AND actionability IN ('to-read', 'to-watch')
+    SELECT b.id, b.url, b.url_hash, b.source, b.source_id, b.media_type,
+      b.source_metadata, b.collected_at, b.created_at, b.updated_at,
+      COALESCE(pb.title, b.title) as title,
+      pb.category, pb.obsidian_path, pb.summary, pb.actionability, pb.quality_signal
+    FROM bookmarks b
+    JOIN processed_bookmarks pb ON b.id = pb.bookmark_id
+    WHERE pb.status = 'completed'
+      AND pb.actionability IN ('to-read', 'to-watch')
     ORDER BY
-      CASE quality_signal
+      CASE pb.quality_signal
         WHEN 'comprehensive' THEN 1
         WHEN 'deep-dive' THEN 2
         WHEN 'standard' THEN 3
         WHEN 'quick-tip' THEN 4
         ELSE 5
       END,
-      collected_at DESC
+      b.collected_at DESC
   `).all() as BookmarkRow[];
 
   const lines: string[] = [
@@ -202,11 +218,12 @@ function generateToReadIndex(): void {
 function generateMachineIndex(): void {
   const db = getDb();
   const bookmarks = db.prepare(`
-    SELECT b.id, b.url, b.title, b.source, b.category, b.summary,
-           b.actionability, b.quality_signal, b.author, b.collected_at,
-           b.obsidian_path
+    SELECT b.id, b.url, COALESCE(pb.title, b.title) as title, b.source,
+           pb.category, pb.summary, pb.actionability, pb.quality_signal,
+           pb.author, b.collected_at, pb.obsidian_path
     FROM bookmarks b
-    WHERE b.status = 'completed'
+    JOIN processed_bookmarks pb ON b.id = pb.bookmark_id
+    WHERE pb.status = 'completed'
     ORDER BY b.collected_at DESC
   `).all() as BookmarkRow[];
 

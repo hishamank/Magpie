@@ -20,7 +20,8 @@ export async function collectRaindropBookmarks(options?: { limit?: number }): Pr
   logger.info('Collecting Raindrop bookmarks');
 
   while (bookmarks.length < limit) {
-    const resp = await fetch(`${RAINDROP_API}/raindrops/0?page=${page}&perpage=${perPage}&sort=-created`, {
+    // Collection -1 = all collections (not just unsorted)
+    const resp = await fetch(`${RAINDROP_API}/raindrops/-1?page=${page}&perpage=${perPage}&sort=-created`, {
       headers: {
         'Authorization': `Bearer ${config.raindrop.token}`,
       },

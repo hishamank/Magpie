@@ -6,10 +6,6 @@ import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('llm');
 
-type ContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } };
-
 // Lazily initialized local provider
 let localProvider: OpenAICompatibleProvider | null = null;
 
@@ -33,7 +29,6 @@ let step2Chain: ProviderChain | null = null;
 export function getStep2Chain(): ProviderChain {
   if (!step2Chain) {
     const providers: LLMProvider[] = config.llm.step2Providers.map(cfg => {
-      // Gemini uses CLI subprocess instead of HTTP API
       if (cfg.name === 'gemini') {
         return new GeminiCLIProvider(cfg.model);
       }
@@ -47,6 +42,23 @@ export function getStep2Chain(): ProviderChain {
     step2Chain = new ProviderChain(providers);
   }
   return step2Chain;
+}
+
+// Lazily initialized vision providers
+let visionProviders: OpenAICompatibleProvider[] | null = null;
+
+function getVisionProviders(): OpenAICompatibleProvider[] {
+  if (!visionProviders) {
+    visionProviders = config.llm.visionProviders.map(cfg =>
+      new OpenAICompatibleProvider({
+        name: cfg.name,
+        baseUrl: cfg.baseUrl.includes('/v1') ? cfg.baseUrl : cfg.baseUrl + '/v1',
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+      })
+    );
+  }
+  return visionProviders;
 }
 
 /**
@@ -64,8 +76,8 @@ export async function chatCompletion(
 }
 
 /**
- * Vision-capable chat completion using the local LLM server.
- * Sends an image alongside a text prompt using multimodal content format.
+ * Vision-capable chat completion using cloud LLM providers.
+ * Tries providers in order (groq → openrouter → nvidia) with fallback.
  */
 export async function visionCompletion(
   prompt: string,
@@ -73,37 +85,28 @@ export async function visionCompletion(
   mimeType: string,
   options?: { temperature?: number }
 ): Promise<string> {
-  const url = `${config.llm.url}/v1/chat/completions`;
+  const providers = getVisionProviders();
 
-  logger.debug('Sending LLM vision request');
-
-  const content: ContentPart[] = [
-    { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
-    { type: 'text', text: prompt },
-  ];
-
-  const body: Record<string, unknown> = {
-    messages: [{ role: 'user', content }],
-    temperature: options?.temperature ?? 0.2,
-    stream: false,
-  };
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`LLM vision API error (${response.status}): ${text}`);
+  if (providers.length === 0) {
+    throw new Error('No vision providers configured (need GROQ_API_KEY, OPENROUTER_API_KEY, or NVIDIA_API_KEY)');
   }
 
-  const data = await response.json() as {
-    choices: { message: { content: string } }[];
-  };
+  for (let i = 0; i < providers.length; i++) {
+    const provider = providers[i];
+    try {
+      logger.debug({ provider: provider.name }, 'Sending vision request');
+      const result = await provider.visionComplete!(prompt, imageBase64, mimeType, {
+        temperature: options?.temperature,
+      });
+      logger.debug({ provider: provider.name }, 'Vision response received');
+      return result;
+    } catch (err) {
+      const statusCode = (err as unknown as Record<string, unknown>).statusCode as number | undefined;
+      logger.warn({ provider: provider.name, statusCode, error: (err as Error).message?.slice(0, 100) }, 'Vision provider failed');
+      if (i === providers.length - 1) throw err;
+      // Try next provider
+    }
+  }
 
-  logger.debug('LLM vision response received');
-  return data.choices[0].message.content;
+  throw new Error('All vision providers failed');
 }

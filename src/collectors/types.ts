@@ -3,7 +3,7 @@ export interface BookmarkInput {
   title?: string;
   source: 'twitter' | 'youtube' | 'github' | 'raindrop' | 'discord' | 'reddit' | 'manual';
   sourceId?: string;
-  mediaType?: 'article' | 'video' | 'repo' | 'tweet' | 'thread' | 'paper' | 'pdf' | 'other';
+  mediaType?: 'article' | 'x-article' | 'video' | 'repo' | 'tweet' | 'thread' | 'paper' | 'pdf' | 'other';
   sourceMetadata?: Record<string, unknown>;
   collectedAt?: Date;
 }
