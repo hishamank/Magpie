@@ -119,21 +119,34 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     // write a minimal note and bail before we run the expensive steps.
     const gate = await checkSkipGate(content, input);
     if (gate.skip) {
-      const minimalPath = compileMinimalNote(bookmarkId, content, input, gate.reason);
-      markSkipped(bookmarkId, gate.reason, {
-        title: content.title || input.title,
-        author: content.author,
-        thumbnail: content.images?.[0],
-        obsidianPath: minimalPath,
-      });
-      appendToLog(
-        content.title || input.title || '',
-        gate.reason,
-        input.source,
-        input.url,
-      );
-      logger.info({ url: input.url, reason: gate.reason, path: minimalPath }, 'Bookmark skipped by gate');
-      return;
+      let minimalPath: string | null = null;
+      try {
+        minimalPath = compileMinimalNote(bookmarkId, content, input, gate.reason);
+      } catch (err) {
+        // Fail-open: if the vault write fails, fall through to the normal
+        // pipeline rather than leaving the bookmark stuck in the queue.
+        logger.warn(
+          { url: input.url, reason: gate.reason, err: (err as Error).message },
+          'minimal-note write failed — continuing normal pipeline',
+        );
+      }
+      if (minimalPath !== null) {
+        markSkipped(bookmarkId, gate.reason, {
+          title: content.title || input.title,
+          author: content.author,
+          thumbnail: content.images?.[0],
+          obsidianPath: minimalPath,
+        });
+        appendToLog(
+          content.title || input.title || '',
+          'music',
+          input.source,
+          input.url,
+        );
+        logger.info({ url: input.url, reason: gate.reason, path: minimalPath }, 'Bookmark skipped by gate');
+        return;
+      }
+      // else: minimal-note failed; fall through to normal pipeline below
     }
 
     // Step 3: Content-based dedup check
