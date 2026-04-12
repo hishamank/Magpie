@@ -5,10 +5,12 @@ import { downloadAllMedia } from '../extractors/media.js';
 import { processAllMedia, inlineMediaContent } from '../extractors/media-processing.js';
 import { cleanupMarkdown } from '../extractors/cleanup.js';
 import { classifyContent } from './classifier.js';
+import { checkSkipGate } from './skip-gate.js';
 import { archiveContent } from './archiver.js';
 import { processKeywords, updateKeywordLinks, computeRelatedBookmarks } from './keywords.js';
 import { enrichRelationships } from './enricher.js';
 import { compileObsidianNote } from '../obsidian/compiler.js';
+import { compileMinimalNote } from '../obsidian/minimal-compiler.js';
 import { updateAllIndexFiles } from '../obsidian/indexer.js';
 import { computeSimhash } from '../utils/hash.js';
 import { config } from '../config.js';
@@ -22,6 +24,7 @@ import {
   removeFromQueue,
   addToProcessingQueue,
   markContentRemoved,
+  markSkipped,
   requeueWithDelay,
   updateExtractionStatus,
 } from '../db/queries.js';
@@ -110,6 +113,28 @@ export async function processBookmark(input: BookmarkInput, bookmarkId: number):
     }
 
     const content = result.content!;
+
+    // Step 2.5: Skip gate — cheap LLM check on metadata only.
+    // If this is a music video (or another skip category in the future),
+    // write a minimal note and bail before we run the expensive steps.
+    const gate = await checkSkipGate(content, input);
+    if (gate.skip) {
+      const minimalPath = compileMinimalNote(bookmarkId, content, input, gate.reason);
+      markSkipped(bookmarkId, gate.reason, {
+        title: content.title || input.title,
+        author: content.author,
+        thumbnail: content.images?.[0],
+        obsidianPath: minimalPath,
+      });
+      appendToLog(
+        content.title || input.title || '',
+        gate.reason,
+        input.source,
+        input.url,
+      );
+      logger.info({ url: input.url, reason: gate.reason, path: minimalPath }, 'Bookmark skipped by gate');
+      return;
+    }
 
     // Step 3: Content-based dedup check
     const contentHash = computeSimhash(content.text);
