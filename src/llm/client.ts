@@ -67,11 +67,12 @@ function getVisionProviders(): OpenAICompatibleProvider[] {
  */
 export async function chatCompletion(
   prompt: string,
-  options?: { temperature?: number; format?: 'json' }
+  options?: { temperature?: number; format?: 'json'; reasoningBudget?: number }
 ): Promise<string> {
   return getLocalProvider().complete(prompt, {
     temperature: options?.temperature,
     format: options?.format,
+    reasoningBudget: options?.reasoningBudget,
   });
 }
 

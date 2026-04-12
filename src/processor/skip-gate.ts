@@ -6,7 +6,7 @@ import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('skip-gate');
 
-const GATE_TIMEOUT_MS = 15_000;
+const GATE_TIMEOUT_MS = 30_000;
 
 export type SkipReason = 'music_video';
 
@@ -37,7 +37,7 @@ export async function checkSkipGate(
   let raw: string;
   try {
     raw = await Promise.race([
-      chatCompletion(prompt, { format: 'json', temperature: 0.1 }),
+      chatCompletion(prompt, { format: 'json', temperature: 0.1, reasoningBudget: 0 }),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(
           () => reject(new Error(`skip-gate timeout after ${GATE_TIMEOUT_MS}ms`)),

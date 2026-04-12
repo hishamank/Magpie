@@ -7,6 +7,12 @@ export interface CompletionOptions {
   temperature?: number;
   format?: 'json';
   timeoutMs?: number;
+  /**
+   * llama.cpp extension: cap reasoning-mode token budget.
+   * `0` disables reasoning for models that support it (e.g. Gemma 4, Qwen3).
+   * Ignored by providers that don't recognize the field.
+   */
+  reasoningBudget?: number;
 }
 
 type ContentPart =
@@ -70,6 +76,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     if (options?.format === 'json') {
       body.response_format = { type: 'json_object' };
+    }
+
+    if (options?.reasoningBudget !== undefined) {
+      body.reasoning_budget = options.reasoningBudget;
     }
 
     const timeout = options?.timeoutMs ?? 120_000;

@@ -53,7 +53,7 @@ Platform categories: ${categories}
 Platform tags: ${tags}
 Description (truncated): ${description}
 
-Respond with ONLY valid JSON: { "isMusicVideo": <true|false>, "reason": "<one sentence>" }`;
+Respond directly with ONLY the JSON object — do not think step-by-step, do not explain. Format: { "isMusicVideo": <true|false>, "reason": "<one sentence>" }`;
 }
 
 /**
