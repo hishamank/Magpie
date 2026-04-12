@@ -41,11 +41,11 @@ export function compileMinimalNote(
 
   const lines: string[] = [];
   lines.push('---');
-  lines.push(`title: "${title.replace(/"/g, '\\"')}"`);
+  lines.push(`title: "${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
   lines.push(`url: ${input.url}`);
   lines.push(`source: ${input.source}`);
   lines.push(`type: ${reason}`);
-  if (author) lines.push(`author: ${author}`);
+  if (author) lines.push(`author: "${author.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
   if (thumbnail) lines.push(`thumbnail: "${thumbnail}"`);
   lines.push('tags: [music, skipped]');
   lines.push(`collected: ${date}`);
