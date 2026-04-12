@@ -403,6 +403,35 @@ export function markContentRemoved(bookmarkId: number): void {
   db.prepare('DELETE FROM processing_queue WHERE bookmark_id = ?').run(bookmarkId);
 }
 
+/**
+ * Mark a bookmark as skipped by the pre-classifier skip gate.
+ * `reason` is the skip category (e.g. 'music_video'). The DB status is
+ * stored as `'skipped_' + reason` so existing status-breakdown queries
+ * can tell the categories apart.
+ */
+export function markSkipped(
+  bookmarkId: number,
+  reason: string,
+  fields: {
+    title?: string;
+    author?: string;
+    thumbnail?: string;
+    obsidianPath?: string;
+  },
+): void {
+  upsertProcessedBookmark(bookmarkId, {
+    status: `skipped_${reason}`,
+    contentType: reason,
+    title: fields.title,
+    author: fields.author,
+    thumbnail: fields.thumbnail,
+    obsidianPath: fields.obsidianPath,
+    processedAt: new Date().toISOString(),
+  });
+  const db = getDb();
+  db.prepare('DELETE FROM processing_queue WHERE bookmark_id = ?').run(bookmarkId);
+}
+
 export function requeueWithDelay(bookmarkId: number, delaySec: number): void {
   updateProcessingStatus(bookmarkId, 'pending');
   upsertProcessedBookmark(bookmarkId, { extractionStatus: 'rate_limited' });
