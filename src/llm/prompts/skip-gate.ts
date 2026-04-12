@@ -69,7 +69,12 @@ export function parseSkipGateResult(raw: string): SkipGateDecision {
   }
   const parsed = JSON.parse(jsonMatch[0].replace(/,\s*([}\]])/g, '$1')) as Record<string, unknown>;
 
-  const isMusicVideo = parsed.isMusicVideo === true;
-  const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
-  return { isMusicVideo, reason };
+  if (typeof parsed.isMusicVideo !== 'boolean') {
+    throw new Error('isMusicVideo missing or non-boolean in skip-gate response');
+  }
+
+  const reason = typeof parsed.reason === 'string' && parsed.reason.length > 0
+    ? parsed.reason
+    : '(no reason provided)';
+  return { isMusicVideo: parsed.isMusicVideo, reason };
 }
