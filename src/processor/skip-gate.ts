@@ -1,5 +1,5 @@
 import { chatCompletion } from '../llm/client.js';
-import { buildSkipGatePrompt, parseSkipGateResult } from '../llm/prompts/skip-gate.js';
+import { buildSkipGatePrompt, parseSkipGateResult, type SkipGateDecision } from '../llm/prompts/skip-gate.js';
 import type { ExtractedContent } from '../extractors/types.js';
 import type { BookmarkInput } from '../collectors/types.js';
 import { getLogger } from '../utils/logger.js';
@@ -25,22 +25,34 @@ export async function checkSkipGate(
   content: ExtractedContent,
   input: BookmarkInput,
 ): Promise<SkipGateResult> {
-  const prompt = buildSkipGatePrompt(content, input);
+  let prompt: string;
+  try {
+    prompt = buildSkipGatePrompt(content, input);
+  } catch (err) {
+    logger.warn({ url: input.url, err: (err as Error).message }, 'skip-gate prompt build failed — continuing normal pipeline');
+    return { skip: false };
+  }
 
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let raw: string;
   try {
     raw = await Promise.race([
       chatCompletion(prompt, { format: 'json', temperature: 0.1 }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`skip-gate timeout after ${GATE_TIMEOUT_MS}ms`)), GATE_TIMEOUT_MS),
-      ),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`skip-gate timeout after ${GATE_TIMEOUT_MS}ms`)),
+          GATE_TIMEOUT_MS,
+        );
+      }),
     ]);
   } catch (err) {
     logger.warn({ url: input.url, err: (err as Error).message }, 'skip-gate LLM call failed — continuing normal pipeline');
     return { skip: false };
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 
-  let decision;
+  let decision: SkipGateDecision;
   try {
     decision = parseSkipGateResult(raw);
   } catch (err) {
