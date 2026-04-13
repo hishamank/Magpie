@@ -9,3 +9,4 @@ vault/
 *.db-wal
 *.db-shm
 process.log
+.rick/
