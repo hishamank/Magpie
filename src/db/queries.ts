@@ -373,7 +373,9 @@ export function getStats(): {
     processing: getCount('processing'),
     completed: getCount('completed'),
     failed: getCount('failed'),
-    skipped: getCount('skipped'),
+    skipped: statusCounts
+      .filter(r => r.status === 'skipped' || r.status.startsWith('skipped_'))
+      .reduce((sum, r) => sum + r.count, 0),
     contentRemoved: getCount('content_removed'),
     paywall: getCount('paywall'),
     bySource,
